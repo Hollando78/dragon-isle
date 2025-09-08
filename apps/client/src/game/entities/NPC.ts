@@ -1,7 +1,8 @@
 import Phaser from 'phaser';
+import { ensureNPCSprite } from '../assets/npcSprites';
 
 export class NPCEntity {
-  public sprite: Phaser.GameObjects.Circle;
+  public sprite: Phaser.GameObjects.Sprite;
   public id: string;
   public name: string;
   public role: string;
@@ -10,10 +11,12 @@ export class NPCEntity {
     this.id = id;
     this.name = name;
     this.role = role;
-    this.sprite = scene.add.circle(x, y, 12, 0xffd166, 1) as Phaser.GameObjects.Circle;
-    this.sprite.setStrokeStyle(2, 0x855d0e, 1);
+    ensureNPCSprite(scene, id, role);
+    this.sprite = scene.add.sprite(x, y, `npc-${id}-0`);
+    this.sprite.setOrigin(0.5, 0.85);
     const depth = Math.floor(y * 10 + x * 0.1) - 1;
     this.sprite.setDepth(depth);
+    // Gentle idle animation
+    this.sprite.play(`npc-${id}-idle`);
   }
 }
-

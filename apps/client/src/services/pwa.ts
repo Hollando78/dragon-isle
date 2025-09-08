@@ -2,15 +2,12 @@ export async function registerServiceWorker() {
   if ('serviceWorker' in navigator) {
     try {
       const registration = await navigator.serviceWorker.register('/sw.js');
-      console.log('Service Worker registered:', registration);
       
       registration.addEventListener('updatefound', () => {
         const newWorker = registration.installing;
         if (newWorker) {
           newWorker.addEventListener('statechange', () => {
             if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
-              console.log('New content available, refresh to update');
-              
               if (confirm('New version available! Refresh to update?')) {
                 window.location.reload();
               }
@@ -19,7 +16,7 @@ export async function registerServiceWorker() {
         }
       });
     } catch (error) {
-      console.error('Service Worker registration failed:', error);
+      // ignore registration errors; app still functions offline-less
     }
   }
 }
@@ -44,7 +41,6 @@ export async function promptInstall() {
   if (deferredPrompt) {
     deferredPrompt.prompt();
     const { outcome } = await deferredPrompt.userChoice;
-    console.log(`User response to install prompt: ${outcome}`);
     (window as any).deferredPrompt = null;
     return outcome === 'accepted';
   }
@@ -59,7 +55,6 @@ if (typeof window !== 'undefined') {
   });
   
   window.addEventListener('appinstalled', () => {
-    console.log('PWA was installed');
     (window as any).deferredPrompt = null;
   });
 }

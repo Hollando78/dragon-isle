@@ -42,9 +42,14 @@ export class Player {
 
     // Ensure procedural walking man textures/animation exist
     ensureWalkingManTexture(scene);
+    
     // Create player sprite using walking man frame 0
     this.sprite = scene.add.sprite(x, y, 'walkman-0');
     this.sprite.setOrigin(0.5, 0.8);
+    
+    // Ensure sprite is visible and has proper alpha
+    this.sprite.setVisible(true);
+    this.sprite.setAlpha(1);
 
     // Place name label below the character so it doesn't overlap the face
     this.nameText = scene.add.text(x, y + 18, 'Player', {
@@ -56,7 +61,8 @@ export class Player {
     this.nameText.setOrigin(0.5);
     
     // Ensure initial depths match the same formula used during updates
-    const initialDepth = Math.floor(y * 10 + x * 0.1);
+    // Use a high base depth to ensure player is above terrain (terrain uses negative depths)
+    const initialDepth = Math.floor(y * 10 + x * 0.1) + 1000;
     this.sprite.setDepth(initialDepth);
     this.shadow.setDepth(initialDepth - 1);
     this.nameText.setDepth(initialDepth + 1);
@@ -81,28 +87,10 @@ export class Player {
   }
 
   move(x: number, y: number, isRunning = false) {
-    const dbg = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('debug');
-    if (dbg) {
-      // eslint-disable-next-line no-console
-      console.log('👤 Player.move() called:', { x, y, isRunning, currentPos: { x: this.sprite.x, y: this.sprite.y } });
-    }
     const normalized = normalize({ x, y });
-    if (dbg) {
-      // eslint-disable-next-line no-console
-      console.log('👤 Movement normalization:', { 
-        input: { x, y }, 
-        inputLength: Math.sqrt(x*x + y*y), 
-        normalized, 
-        normalizedLength: Math.sqrt(normalized.x*normalized.x + normalized.y*normalized.y) 
-      });
-    }
     this.velocity = normalized;
     this.currentSpeed = isRunning ? this.runSpeed : this.baseSpeed;
     this.isMoving = true;
-    if (dbg) {
-      // eslint-disable-next-line no-console
-      console.log('👤 Player velocity set:', { velocity: this.velocity, speed: this.currentSpeed, isMoving: this.isMoving });
-    }
   }
 
   stop() {
@@ -116,30 +104,9 @@ export class Player {
       const newX = this.sprite.x + this.velocity.x * moveDistance;
       const newY = this.sprite.y + this.velocity.y * moveDistance;
       
-      const dbg = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('debug');
-      if (dbg) {
-        // eslint-disable-next-line no-console
-        console.log('👤 Player.update() moving:', { 
-          delta, 
-          moveDistance, 
-          velocity: this.velocity, 
-          currentPos: { x: this.sprite.x, y: this.sprite.y },
-          newPos: { x: newX, y: newY }
-        });
-      }
-      
       const mainScene = this.scene as any;
       // Check walkability at player's center position (circle center)
       const canWalk = mainScene.isWalkable ? mainScene.isWalkable(newX, newY) : true;
-      if (dbg) {
-        // eslint-disable-next-line no-console
-        console.log('👤 Walkability check for movement:', { 
-          from: { x: this.sprite.x, y: this.sprite.y }, 
-          to: { x: newX, y: newY },
-          canWalk,
-          moveVector: { x: this.velocity.x, y: this.velocity.y }
-        });
-      }
       
       if (canWalk) {
         this.sprite.x = newX;
@@ -150,7 +117,7 @@ export class Player {
           this.sprite.play('walkman-walk');
         }
         
-        const depth = Math.floor(newY * 10 + newX * 0.1);
+        const depth = Math.floor(newY * 10 + newX * 0.1) + 1000;
         this.sprite.setDepth(depth);
         this.shadow.setDepth(depth - 1);
         this.nameText.setDepth(depth + 1);
@@ -171,15 +138,6 @@ export class Player {
         if (this.footstepTimer >= this.footstepInterval) {
           this.playFootstep();
           this.footstepTimer = 0;
-        }
-        if (dbg) {
-          // eslint-disable-next-line no-console
-          console.log('👤 Player position updated to:', { x: this.sprite.x, y: this.sprite.y });
-        }
-      } else {
-        if (dbg) {
-          // eslint-disable-next-line no-console
-          console.warn('👤 Movement blocked by terrain check:', { newX, newY });
         }
       }
     }
@@ -293,7 +251,7 @@ export class Player {
     this.tileHighlight.x = highlightPos.x;
     this.tileHighlight.y = highlightPos.y;
     
-    const depth = Math.floor(y * 10 + x * 0.1);
+    const depth = Math.floor(y * 10 + x * 0.1) + 1000;
     this.sprite.setDepth(depth);
     this.shadow.setDepth(depth - 1);
     this.nameText.setDepth(depth + 1);

@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import type { POIInterior } from '@dragon-isle/shared';
 import { BIOMES, SEA_LEVEL, DRAGON_SPECIES } from '@dragon-isle/shared';
 import { useGameStore } from '../../state/gameStore';
+import { ensureWalkingManTexture } from '../assets/walkingMan';
 
 interface CaveData {
   interior: POIInterior;
@@ -11,7 +12,7 @@ interface CaveData {
 export class DarkCaveScene extends Phaser.Scene {
   private interior!: POIInterior;
   private tileSize = 24;
-  private player!: Phaser.GameObjects.Arc;
+  private player!: Phaser.GameObjects.Sprite;
   private cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
   private wasd!: { [k: string]: Phaser.Input.Keyboard.Key };
   private infoText!: Phaser.GameObjects.Text;
@@ -26,6 +27,17 @@ export class DarkCaveScene extends Phaser.Scene {
 
   constructor() {
     super({ key: 'DarkCaveScene' });
+  }
+  
+  shutdown() {
+    // Clean up sprites
+    this.entitySprites.clear();
+    
+    // Clean up debug grid if it exists
+    if (this.gridOverlay) {
+      this.gridOverlay.destroy();
+      this.gridOverlay = undefined;
+    }
   }
 
   init(data: CaveData) {
@@ -44,17 +56,7 @@ export class DarkCaveScene extends Phaser.Scene {
     }
 
     // Draw cave grid
-    try {
-      console.log('[Cave] Scene create. Seeded interior:', {
-        id: this.interior?.id,
-        type: this.interior?.type,
-        size: { w: this.interior?.layout?.[0]?.length, h: this.interior?.layout?.length },
-        entities: this.interior?.entities?.length,
-        containers: this.interior?.containers?.length
-      });
-    } catch (e) {
-      console.warn('[Cave] Debug init failed:', e);
-    }
+    // Cave scene created
 
     const g = this.add.graphics();
     g.setDepth(-10);
@@ -101,11 +103,13 @@ export class DarkCaveScene extends Phaser.Scene {
     // Spawn player at entrance
     const entrance = this.findEntrance();
     this.entranceTile = entrance;
-    console.log('[Cave] Entrance tile at', entrance);
     const startX = entrance.x * this.tileSize + this.tileSize / 2;
     const startY = entrance.y * this.tileSize + this.tileSize / 2;
-    this.player = this.add.circle(startX, startY, this.tileSize * 0.35, 0x4a9eff) as any;
-    this.player.setStrokeStyle(2, 0x2966a3, 1);
+    this.player = this.add.sprite(startX, startY, 'walkman-0');
+    this.player.setOrigin(0.5, 0.8);
+    const pScale = (this.tileSize / 40) * 1.0;
+    this.player.setScale(pScale);
+    if (this.anims.exists('walkman-walk')) this.player.play('walkman-walk');
     this.cameras.main.startFollow(this.player, true, 0.12, 0.12);
 
     this.infoText = this.add.text(10, 10, 'Dark Cave — Arrows to move, Space to exit', { fontSize: '12px', color: '#ffffff' })
@@ -130,11 +134,7 @@ export class DarkCaveScene extends Phaser.Scene {
       this.eggPromptText!.setPosition(w / 2, h - 40);
     });
 
-    // Always show debug overlay grid
-    this.gridOverlay = this.add.graphics();
-    this.gridOverlay.setDepth(5);
-    this.redrawDebugGrid();
-    console.log('[Cave] Debug grid drawn');
+    // Debug overlay grid removed
   }
 
   update(time: number, delta: number) {
@@ -166,9 +166,7 @@ export class DarkCaveScene extends Phaser.Scene {
     if (right) dx += 1;
     if (up) dy -= 1;
     if (down) dy += 1;
-    if ((left||right||up||down) && (performance.now() % 500 < 16)) {
-      console.log('[Cave] Key state', { left, right, up, down });
-    }
+    // Input handled
     if (dx !== 0 || dy !== 0) {
       const len = Math.sqrt(dx*dx + dy*dy);
       dx /= len; dy /= len;
@@ -177,12 +175,7 @@ export class DarkCaveScene extends Phaser.Scene {
       if (this.isWalkable(nx, ny)) {
         this.player.x = nx; this.player.y = ny;
       } else {
-        const now = performance.now();
-        if (now - this.debugLastBlocked > 250) {
-          const t = this.worldToTile(nx, ny);
-          console.log('[Cave] Movement blocked at world', { nx, ny }, 'tile', t, 'cell', this.interior.layout?.[t.y]?.[t.x]);
-          this.debugLastBlocked = now;
-        }
+        // Movement blocked
       }
     }
 
@@ -228,7 +221,7 @@ export class DarkCaveScene extends Phaser.Scene {
       const cell: any = this.interior.layout[t.y][t.x];
       return cell && cell.walkable !== false;
     } catch (e) {
-      console.warn('[Cave] isWalkable error:', e, { x, y });
+      // Walkability check error
       return false;
     }
   }
@@ -245,10 +238,15 @@ export class DarkCaveScene extends Phaser.Scene {
 
   private exitToMain() {
     const data = (this as any).mainData as { terrainData: any; playerPosition: {x:number;y:number}; worldSnapshot: any };
+    
+    if (!data || !data.terrainData || !data.worldSnapshot) { return; }
+    
     try {
       // Clear POI status in store
       useGameStore.getState().exitPOI();
     } catch {}
+
+    // Exiting to MainScene
 
     // Respawn near the POI entrance on the overworld
     const poiId = this.interior.id;
@@ -282,7 +280,15 @@ export class DarkCaveScene extends Phaser.Scene {
         }
       }
     }
-    const newData = { ...data, playerPosition: target };
+    
+    // Create fresh data object to ensure clean state restoration
+    const newData = {
+      terrainData: data.terrainData,
+      playerPosition: target,
+      worldSnapshot: data.worldSnapshot
+    };
+    
+    // Starting MainScene
     this.scene.start('MainScene', newData);
   }
 
@@ -300,7 +306,7 @@ Y: Yes    N/Space: No`, { fontSize: '16px', color: '#ffffff', align: 'center' })
     this.confirmText = text;
     // store panel to remove through confirmText's data
     (text as any).__panel = panel;
-    console.log('[Cave] Exit confirm shown');
+    // Exit confirm shown
   }
 
   private cleanupConfirm() {
@@ -311,7 +317,7 @@ Y: Yes    N/Space: No`, { fontSize: '16px', color: '#ffffff', align: 'center' })
       this.confirmText.destroy();
       this.confirmText = undefined;
     }
-    console.log('[Cave] Exit confirm hidden');
+    // Exit confirm hidden
   }
 
   private redrawDebugGrid() {
@@ -333,7 +339,7 @@ Y: Yes    N/Space: No`, { fontSize: '16px', color: '#ffffff', align: 'center' })
         g.strokeRect(ex + 1, ey + 1, this.tileSize - 2, this.tileSize - 2);
       }
     } catch (e) {
-      console.warn('[Cave] redrawDebugGrid failed:', e);
+      // Debug grid error
     }
   }
 
@@ -362,9 +368,11 @@ Y: Yes    N/Space: No`, { fontSize: '16px', color: '#ffffff', align: 'center' })
       // Feedback
       this.eggPromptText?.setText('Picked up Dragon Egg!');
       this.time.delayedCall(1200, () => this.eggPromptText?.setVisible(false));
-      console.log('[Cave] Egg picked up:', newEgg);
+      // Egg picked up
     } catch (e) {
-      console.warn('[Cave] Failed to pick up egg:', e);
+      // Failed to pick up egg
+    // Ensure player sprite frames are ready
+    ensureWalkingManTexture(this);
     }
   }
 }

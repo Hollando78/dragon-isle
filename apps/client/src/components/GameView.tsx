@@ -19,7 +19,7 @@ export function GameView() {
   const [generationProgress, setGenerationProgress] = useState(0);
   const [showHistory, setShowHistory] = useState(false);
 
-  console.log('🔄 GameView render - isGenerating:', isGenerating, 'currentSeed:', currentSeed);
+  // Debug logging removed
 
   useEffect(() => {
     if (!gameState) {
@@ -28,29 +28,21 @@ export function GameView() {
     }
 
     const generateWorld = async () => {
-      console.log('🏝️ Starting world generation with seed:', currentSeed);
       setIsGenerating(true);
       setGenerationProgress(0);
 
       // Add delay to allow UI to update
       await new Promise(resolve => setTimeout(resolve, 100));
-      console.log('🔧 Initializing terrain generator...');
-
       const terrainGen = new TerrainGenerator(currentSeed);
       setGenerationProgress(10);
-      console.log('📊 Progress: 10% - Terrain generator ready');
       
       // Add delay before terrain generation
       await new Promise(resolve => setTimeout(resolve, 100));
-      console.log('🗻 Starting terrain generation...');
       const startTime = performance.now();
       const terrainData = await terrainGen.generate();
-      const terrainTime = performance.now() - startTime;
-      console.log(`✅ Terrain generation complete in ${terrainTime.toFixed(2)}ms`);
-      console.log('📊 Progress: 50% - Terrain data ready');
+      const terrainTime = performance.now() - startTime; // kept for potential future metrics
       setGenerationProgress(50);
 
-      console.log('🎯 Determining player start position...');
       const isLoadedGame = !!gameState.worldSnapshot; // loaded saves have a snapshot
       let playerStartGrid = terrainGen.findSpawnPoint(terrainData);
       if (isLoadedGame && gameState.playerState?.position) {
@@ -64,23 +56,15 @@ export function GameView() {
           terrainData.heightMap[candidate.y][candidate.x] > 0 // above 0 elevation (coarse check)
         ) {
           playerStartGrid = { x: candidate.x, y: candidate.y };
-          console.log('✅ Using saved player position from save:', saved, 'grid:', playerStartGrid);
-        } else {
-          console.warn('⚠️ Saved player position out of bounds or not land; using spawn instead:', saved);
         }
-      } else {
-        console.log('ℹ️ New game — using spawn point');
       }
 
       // Add delay before world generation
       await new Promise(resolve => setTimeout(resolve, 100));
-      console.log('🌍 Starting world feature generation...');
       const worldStartTime = performance.now();
       const worldGen = new WorldGenerator(currentSeed);
       const worldSnapshot = worldGen.generate(terrainData, playerStartGrid);
-      const worldTime = performance.now() - worldStartTime;
-      console.log(`✅ World generation complete in ${worldTime.toFixed(2)}ms`);
-      console.log('📊 Progress: 80% - World snapshot ready');
+      const worldTime = performance.now() - worldStartTime; // kept for potential future metrics
       setGenerationProgress(80);
       
       // Ensure connectivity between spawn point and POIs
@@ -89,10 +73,7 @@ export function GameView() {
         ...worldSnapshot.pois.map(poi => ({ x: poi.position.x, y: poi.position.y }))
       ];
       
-      console.log('🛤️ Ensuring walkable paths between important locations...');
       terrainGen.ensureConnectivity(terrainData, importantPoints);
-      
-      console.log('💾 Updating world snapshot in store...');
       updateWorldSnapshot(worldSnapshot);
 
       // Generate initial NPCs based on world + history
@@ -102,45 +83,31 @@ export function GameView() {
         setNPCs(initialNPCs);
       }
       setGenerationProgress(100);
-      console.log('📊 Progress: 100% - World generation complete');
-
+      // generation complete
+      
       // Add final delay before proceeding
       await new Promise(resolve => setTimeout(resolve, 200));
 
-      console.log('🔍 Checking Phaser initialization conditions...');
-      console.log('Container ref exists:', !!containerRef.current);
-      console.log('Game ref exists:', !!gameRef.current);
-      console.log('Is generating:', isGenerating);
-
       if (!containerRef.current) {
-        console.error('❌ Container ref is null - cannot initialize Phaser');
-        console.error('Container element:', containerRef.current);
-        console.error('Document body children:', document.body.children.length);
         return;
       }
 
       if (gameRef.current) {
-        console.log('⚠️ Game instance already exists, destroying it first...');
         gameRef.current.destroy(true);
         gameRef.current = null;
       }
 
-      console.log('🎮 Initializing Phaser game...');
+      // Initialize Phaser game
       const params = new URLSearchParams(window.location.search);
       const forceCanvas = params.get('renderer') === 'canvas';
       const forceWebGL = params.get('renderer') === 'webgl';
       // Default to Canvas to avoid GPU/driver instability; opt-in to WebGL with ?renderer=webgl
       const desiredType = forceWebGL ? Phaser.WEBGL : Phaser.CANVAS;
-      console.log('🧭 Renderer selection:', { forceCanvas, forceWebGL, desiredTypeName: desiredType === Phaser.WEBGL ? 'WEBGL' : 'CANVAS' });
 
       // Basic capability probe
       const probe = document.createElement('canvas');
       const gl = forceWebGL ? (probe.getContext('webgl') || probe.getContext('experimental-webgl')) : null;
-      console.log('🔎 WebGL probe:', {
-        available: !!gl,
-        renderer: gl && (gl.getParameter ? gl.getParameter((gl as any).RENDERER) : undefined),
-        version: gl && (gl.getParameter ? gl.getParameter((gl as any).VERSION) : undefined)
-      });
+      // Silent WebGL probe
       const config: Phaser.Types.Core.GameConfig = {
         type: desiredType,
         parent: containerRef.current,
@@ -175,12 +142,10 @@ export function GameView() {
       };
 
       gameRef.current = new Phaser.Game(config);
-      console.log('✅ Phaser game instance created');
       try {
         const canvasEl = (gameRef.current as any).canvas as HTMLCanvasElement | undefined;
         if (canvasEl) {
           canvasEl.addEventListener('webglcontextlost', (e) => {
-            console.warn('⚠️ WebGL context lost — switching to Canvas', e);
             e.preventDefault();
             try {
               if (gameRef.current) {
@@ -195,27 +160,18 @@ export function GameView() {
             }
           }, false);
           canvasEl.addEventListener('webglcontextrestored', (e) => {
-            console.warn('ℹ️ WebGL context restored', e);
+            // no-op
           }, false);
         }
-        console.log('📝 Environment:', {
-          ua: navigator.userAgent,
-          dpr: window.devicePixelRatio,
-          size: { w: window.innerWidth, h: window.innerHeight }
-        });
       } catch (e) {
-        console.warn('Renderer diagnostics setup failed:', e);
+        // ignore
       }
       
-      console.log('🎬 Starting MainScene with terrain data...');
       gameRef.current.scene.start('MainScene', {
         terrainData,
         playerPosition: playerStartGrid,
         worldSnapshot
       });
-      console.log('✅ MainScene started');
-
-      console.log('🏁 Generation complete - hiding loading screen');
       setIsGenerating(false);
       setShowHistory(true);
     };
@@ -239,9 +195,7 @@ export function GameView() {
     try {
       const { saveGame } = useGameStore.getState();
       await saveGame();
-    } catch (e) {
-      console.warn('Autosave on exit failed (continuing):', e);
-    }
+    } catch (e) { /* ignore */ }
     if (gameRef.current) {
       gameRef.current.destroy(true);
       gameRef.current = null;

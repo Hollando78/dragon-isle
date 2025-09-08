@@ -17,26 +17,18 @@ export class WorldGenerator {
   }
 
   generate(terrainData: TerrainData, nearPlayer?: { x: number; y: number }): WorldSnapshot {
-    console.log('🏛️ Generating Points of Interest...');
     const pois = this.generatePOIs(terrainData);
-    console.log(`✅ Generated ${pois.length} POIs:`, pois.map(poi => `${poi.name} (${poi.type})`));
 
     // Rivers are now generated within TerrainGenerator with moisture/height coupling
     const rivers = terrainData as any && (terrainData as any).rivers ? (terrainData as any).rivers : [];
-    console.log(`🌊 Using rivers from terrain: ${rivers.length}`);
 
-    console.log('📜 Generating world history...');
     const history = this.generateHistory(pois);
-    console.log(`✅ Generated ${history.length} historical events`);
 
-    console.log('⚔️ Generating factions...');
     const factions = this.generateFactions(pois);
-    console.log(`✅ Generated ${factions.length} factions:`, factions.map(f => f.name));
 
     // Derive history embodiment (markers, notes, hooks)
     const historyIndex = this.buildHistoryIndex(history, pois, factions);
 
-    console.log('📦 Assembling world snapshot...');
     const worldSnapshot = {
       seed: this.rng.generateUUID('world'),
       size: terrainData.heightMap.length,
@@ -51,9 +43,19 @@ export class WorldGenerator {
       historyIndex
     };
 
-    // Inject a special Dark Cave near the player that will contain a dragon egg
+    // Inject a friendly Village near the player and a special Dark Cave with an egg
     if (nearPlayer) {
       try {
+        const v = this.placeVillageNearPlayer({
+          size: terrainData.heightMap.length,
+          biomeMap: terrainData.biomeMap,
+          heightMap: terrainData.heightMap,
+          existing: pois,
+          nearPlayer
+        });
+        if (v) {
+          worldSnapshot.pois.push(v.poi);
+        }
         const special = this.placeSpecialCaveNearPlayer(worldSnapshot, nearPlayer);
         if (special) {
           worldSnapshot.pois.push(special.poi);
@@ -63,16 +65,14 @@ export class WorldGenerator {
           if (worldSnapshot.historyIndex) {
             worldSnapshot.historyIndex.poiState = state;
           }
-          console.log('🥚 Placed Egg Cavern near player at', special.poi.position);
+          // egg cavern placed near player
         } else {
-          console.warn('⚠️ Could not place Egg Cavern near player');
+          // no suitable place for egg cavern near player
         }
       } catch (e) {
-        console.warn('Failed to place special cave near player:', e);
+        // ignore placement failure
       }
     }
-    
-    console.log('✅ World snapshot assembled with size:', worldSnapshot.size);
     return worldSnapshot;
   }
 
@@ -355,6 +355,40 @@ export class WorldGenerator {
             name: 'Egg Cavern',
             discovered: false,
             seed: this.rng.generateUUID('seed-special-dark-cave')
+          };
+          return { poi };
+        }
+      }
+    }
+    return null;
+  }
+
+  private placeVillageNearPlayer(args: { size: number; biomeMap: string[][]; heightMap: number[][]; existing: WorldSnapshot['pois']; nearPlayer: { x: number; y: number } }) {
+    const { size, biomeMap, heightMap, existing, nearPlayer } = args;
+    const allowed = new Set([BIOMES.GRASSLAND, BIOMES.SAVANNA, BIOMES.SHRUBLAND, BIOMES.FOREST, BIOMES.COAST, BIOMES.BEACH]);
+    const minDist = 12;
+    const maxRadius = 36;
+    const inBounds = (x: number, y: number) => x >= 2 && y >= 2 && x < size - 2 && y < size - 2;
+    const isValid = (x: number, y: number) => inBounds(x, y) && allowed.has((biomeMap as any)[y][x]) && (heightMap as any)[y][x] > 30;
+    for (let r = 4; r <= maxRadius; r += 2) {
+      for (let dy = -r; dy <= r; dy++) {
+        for (let dx = -r; dx <= r; dx++) {
+          if (Math.abs(dx) !== r && Math.abs(dy) !== r) continue;
+          const x = nearPlayer.x + dx;
+          const y = nearPlayer.y + dy;
+          if (!isValid(x, y)) continue;
+          let ok = true;
+          for (const p of existing) {
+            if (distance({ x, y }, p.position) < minDist) { ok = false; break; }
+          }
+          if (!ok) continue;
+          const poi = {
+            id: this.rng.generateUUID('poi-special-village'),
+            type: POI_TYPES.VILLAGE as const,
+            position: { x, y },
+            name: this.generatePOIName(POI_TYPES.VILLAGE as any, this.rng.getSubRNG('nearVillage')),
+            discovered: true,
+            seed: this.rng.generateUUID('seed-special-village')
           };
           return { poi };
         }

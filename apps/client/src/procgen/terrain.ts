@@ -88,28 +88,19 @@ export class TerrainGenerator {
   }
 
   private async generateAsync(): Promise<TerrainData> {
-    console.log('🏔️ Generating height map...');
+    // debug logs removed
     const heightMap = await this.generateHeightMapAsync();
-    console.log('✅ Height map complete');
 
-    console.log('💧 Generating moisture map...');
     let moistureMap = await this.generateMoistureMapAsync(heightMap);
-    console.log('✅ Moisture map complete');
 
     // Rivers and climate coupling
-    console.log('🗺️ Generating rivers...');
     const rivers = this.generateRivers(heightMap);
-    console.log(`✅ Rivers generated: ${rivers.length}`);
     this.carveChannels(heightMap, rivers);
     moistureMap = this.applyRiverMoisture(moistureMap, rivers);
 
-    console.log('🌡️ Generating temperature map...');
     const temperatureMap = await this.generateTemperatureMapAsync(heightMap);
-    console.log('✅ Temperature map complete');
 
-    console.log('🌿 Generating biome map...');
     const biomeMap = await this.generateBiomeMapAsync(heightMap, moistureMap, temperatureMap);
-    console.log('✅ Biome map complete');
 
     return {
       heightMap,
@@ -747,8 +738,7 @@ export class TerrainGenerator {
     const center = { x: this.size / 2, y: this.size / 2 };
     const searchRadius = this.size * 0.4;
     
-    console.log(`🔍 Searching for spawn point in ${this.size}x${this.size} world, center: (${center.x}, ${center.y})`);
-    console.log(`🔍 Center elevation: ${terrainData.heightMap[center.y][center.x]}, biome: ${terrainData.biomeMap[center.y][center.x]}, sea level: ${SEA_LEVEL}`);
+    // debug logs removed
     
     let candidatesChecked = 0;
     let landFound = 0;
@@ -790,7 +780,7 @@ export class TerrainGenerator {
         }
         const goodLand = elevation > SEA_LEVEL && biome !== BIOMES.MOUNTAIN && biome !== BIOMES.SWAMP && biome !== BIOMES.OCEAN;
         if ((isBeach || (goodLand && adjacentToOcean))) {
-          console.log(`🎯 Found coastal spawn at (${x}, ${y}) - biome: ${biome}, elevation: ${elevation}, adjacentToOcean=${adjacentToOcean}`);
+            // debug logs removed
           return { x, y };
         }
         // Track best coastal fallback if we see one (higher elevation wins to avoid waterline glitches)
@@ -804,7 +794,7 @@ export class TerrainGenerator {
     
     // If no coastal location, prefer best coastal fallback
     if (coastalFallback) {
-      console.log(`🎯 Using coastal fallback at (${coastalFallback.x}, ${coastalFallback.y}) - biome: ${coastalFallback.biome}, elevation: ${coastalFallback.elevation}`);
+      // debug logs removed
       return { x: coastalFallback.x, y: coastalFallback.y };
     }
 
@@ -813,23 +803,23 @@ export class TerrainGenerator {
       // Sort by elevation (higher is better) and pick the best
       fallbackOptions.sort((a, b) => b.elevation - a.elevation);
       const fallback = fallbackOptions[0];
-      console.log(`🎯 Using fallback spawn point at (${fallback.x}, ${fallback.y}) - biome: ${fallback.biome}, elevation: ${fallback.elevation} (checked ${candidatesChecked} candidates, found ${landFound} land tiles, ${fallbackOptions.length} fallback options)`);
+      // debug logs removed
       return { x: fallback.x, y: fallback.y };
     }
     
     // Last resort: force create a walkable spot at center
-    console.warn(`⚠️ No walkable terrain found after checking ${candidatesChecked} candidates! Force-creating walkable center point.`);
+    // debug logs removed
     terrainData.heightMap[center.y][center.x] = SEA_LEVEL + 10;
     terrainData.biomeMap[center.y][center.x] = BIOMES.GRASSLAND;
-    console.log(`🔧 Force-set center (${center.x}, ${center.y}) to walkable: elevation ${SEA_LEVEL + 10}, biome: ${BIOMES.GRASSLAND}`);
+    // debug logs removed
     return center;
   }
 
   ensureConnectivity(terrainData: TerrainData, importantPoints: Array<{ x: number; y: number }>) {
-    console.log(`🛤️ Ensuring connectivity between ${importantPoints.length} important points...`);
+    // debug logs removed
     
     if (importantPoints.length < 2) {
-      console.log('✅ Less than 2 points, no connectivity needed');
+      // debug logs removed
       return;
     }
 
@@ -840,7 +830,7 @@ export class TerrainGenerator {
       const from = importantPoints[i];
       const to = importantPoints[i + 1];
       
-      console.log(`🛤️ Creating path from (${from.x}, ${from.y}) to (${to.x}, ${to.y})`);
+      // debug logs removed
       
       if (this.createWalkablePath(terrainData, from, to)) {
         pathsCreated++;
@@ -851,13 +841,13 @@ export class TerrainGenerator {
     if (importantPoints.length > 2) {
       const first = importantPoints[0];
       const last = importantPoints[importantPoints.length - 1];
-      console.log(`🛤️ Creating path from (${last.x}, ${last.y}) to (${first.x}, ${first.y}) to close the loop`);
+      // debug logs removed
       if (this.createWalkablePath(terrainData, last, first)) {
         pathsCreated++;
       }
     }
 
-    console.log(`✅ Created ${pathsCreated} walkable paths between important points`);
+    // debug logs removed
   }
 
   private createWalkablePath(terrainData: TerrainData, from: Vector2, to: Vector2): boolean {
@@ -904,7 +894,7 @@ export class TerrainGenerator {
       }
     }
     
-    console.log(`🛤️ Path created with ${tilesModified} tiles modified`);
+    // debug logs removed
     return tilesModified > 0;
   }
 }

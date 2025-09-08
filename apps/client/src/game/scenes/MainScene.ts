@@ -10,6 +10,8 @@ import { NPCManager } from '../entities/NPCManager';
 import { useGameStore } from '../../state/gameStore';
 import { DarkCaveScene } from './DarkCaveScene';
 import { generateDarkCave } from '../../procgen/interiors/darkCave';
+import { VillageScene } from './VillageScene';
+import { generateVillage } from '../../procgen/interiors/village';
 import { POI_TYPES } from '@dragon-isle/shared';
 
 export class MainScene extends Phaser.Scene {
@@ -22,29 +24,40 @@ export class MainScene extends Phaser.Scene {
   private isInitialized = false;
   private worldSnapshot!: WorldSnapshot;
   private npcManager!: NPCManager;
-  private hoverText?: Phaser.GameObjects.Text;
   private poiPromptText?: Phaser.GameObjects.Text;
   private lastCameraBounds?: Phaser.Geom.Rectangle;
   private chunkUpdateTimer = 0;
-  private debugText?: Phaser.GameObjects.Text;
-  private frameCount = 0;
-  private lastFpsUpdate = 0;
-  private deltaHistory: number[] = [];
+  // debug overlays removed
+  private cleanupHandlers: Array<() => void> = [];
 
   constructor() {
     super({ key: 'MainScene' });
   }
 
   init(data: { terrainData: TerrainData; playerPosition: { x: number; y: number }, worldSnapshot: WorldSnapshot }) {
-    console.log('🎬 MainScene.init() called with data:', {
-      terrainDataSize: data.terrainData?.heightMap?.length,
-      playerPosition: data.playerPosition
-    });
     this.terrainData = data.terrainData;
     this.playerGridPosition = data.playerPosition;
     this.worldSnapshot = data.worldSnapshot;
     this.isInitialized = true;
-    console.log('✅ MainScene initialized');
+  }
+  
+  shutdown() {
+    // Don't clean up terrain renderer on shutdown - let Phaser handle it
+    // Only clean up our tracking data
+    
+    // Run any additional cleanup handlers
+    for (const handler of this.cleanupHandlers) {
+      try {
+        handler();
+      } catch (e) {
+        // Silent cleanup
+      }
+    }
+    this.cleanupHandlers.length = 0;
+    
+    // Clear references
+    this.lastCameraBounds = undefined;
+    // debug metrics removed
   }
 
   preload() {
@@ -75,64 +88,43 @@ export class MainScene extends Phaser.Scene {
         this.load.image(`tile-${biome}-${i}`, `/assets/tiles/${biome}_${i}.png`);
       }
     }
-    console.log('✅ Asset loading queued');
+    // Assets loaded
   }
 
   create() {
-    console.log('🏗️ MainScene.create() started');
     if (!this.isInitialized) {
-      console.error('❌ Scene not properly initialized with terrain data');
       return;
     }
 
-    console.log('🎥 Setting camera background color');
     this.cameras.main.setBackgroundColor('#1a1a2e');
     
-    console.log('🗺️ Creating terrain renderer...');
     (this as any).worldSnapshot = this.worldSnapshot; // expose for renderers
+    
+    // Create fresh terrain renderer
     this.terrainRenderer = new TerrainRenderer(this, this.terrainData);
-    console.log('🖼️ Rendering terrain near player start...', this.playerGridPosition);
+    // Initial render with smaller area to reduce load time
     this.terrainRenderer.render(this.playerGridPosition);
-    console.log('✅ Terrain rendered');
-    // Force-load chunks around player to avoid blank view on scene restart
-    try {
-      this.terrainRenderer.forceLoadAround(this.playerGridPosition.x, this.playerGridPosition.y, 3);
-    } catch (e) {
-      console.warn('Force-load around player failed:', e);
-    }
     
     // The spawn point is already in grid coordinates, convert to world coordinates properly
     const playerGridPos = this.playerGridPosition;
     const playerWorldPos = gridToWorld(playerGridPos, TILE_SIZE);
     
-    console.log('👤 Player grid position:', playerGridPos);
-    console.log('👤 Player world position (for movement):', playerWorldPos);
-    console.log('👤 Grid bounds check:', { 
-      gridX: playerGridPos.x, 
-      gridY: playerGridPos.y, 
-      maxX: this.terrainData.biomeMap[0].length, 
-      maxY: this.terrainData.biomeMap.length 
-    });
-    
     this.player = new Player(this, playerWorldPos.x, playerWorldPos.y);
     
     // Removed old debug tile to avoid masking terrain
     
-    console.log('🎮 Creating camera controller...');
     this.cameraController = new CameraController(this, this.player);
-    console.log('✅ Camera controller created');
-    console.log('🎮 Creating input controller...');
     this.inputController = new InputController(this, this.player, this.cameraController);
-    console.log('✅ Input controller created');
 
-    // After camera starts following, update visible chunks once more
-    try {
-      this.terrainRenderer.updateVisibleChunks(this.cameras.main);
-      this.time.delayedCall(50, () => this.terrainRenderer.updateVisibleChunks(this.cameras.main));
-      this.time.delayedCall(150, () => this.terrainRenderer.updateVisibleChunks(this.cameras.main));
-    } catch (e) {
-      console.warn('Post-follow chunk update failed:', e);
-    }
+    // Delayed chunk loading to avoid frame drops
+    this.time.delayedCall(250, () => {
+      try {
+        if (this.terrainRenderer && !this.terrainRenderer.isDestroyed) {
+          // Load chunks gradually
+          this.terrainRenderer.updateVisibleChunks(this.cameras.main);
+        }
+      } catch (e) { /* ignore */ }
+    });
 
     // Spawn NPCs from store
     this.npcManager = new NPCManager(this);
@@ -142,6 +134,10 @@ export class MainScene extends Phaser.Scene {
     // Register DarkCaveScene if not present
     if (!(this.game.scene.keys as any)['DarkCaveScene']) {
       this.scene.add('DarkCaveScene', DarkCaveScene, false);
+    }
+    // Register VillageScene if not present
+    if (!(this.game.scene.keys as any)['VillageScene']) {
+      this.scene.add('VillageScene', VillageScene, false);
     }
 
     // Listen for player interact → find nearby NPC and open dialogue or enter POI
@@ -156,7 +152,7 @@ export class MainScene extends Phaser.Scene {
       store.openDialogue(npc.name, lines);
     });
 
-    // Additional: check for nearby POIs and enter dark caves
+    // Additional: check for nearby POIs and enter interiors
     this.events.on('playerInteract', () => {
       const store = useGameStore.getState();
       const world = this.worldSnapshot;
@@ -170,57 +166,31 @@ export class MainScene extends Phaser.Scene {
         const d = Math.sqrt(dx*dx + dy*dy);
         if (d < bestD) { bestD = d; closest = p; }
       }
-      if (closest && bestD <= 3 && closest.type === POI_TYPES.DARK_CAVE) {
-        // Get or generate interior
-        const existing = store.gameState?.poiInteriors.find(i => i.id === closest.id);
-        // Check world flags for guaranteed egg
-        const flags = this.worldSnapshot.historyIndex?.poiState?.find(p => p.id === closest.id)?.flags || [];
-        const guaranteedEgg = flags.includes('guaranteed_egg');
-        const interior = existing || generateDarkCave(closest.id, closest.seed, { guaranteedEgg });
-        if (!existing) {
-          useGameStore.getState().setPOIInterior(interior);
+      if (closest && bestD <= 3) {
+        if (closest.type === POI_TYPES.DARK_CAVE) {
+          const existing = store.gameState?.poiInteriors.find(i => i.id === closest.id);
+          const flags = this.worldSnapshot.historyIndex?.poiState?.find(p => p.id === closest.id)?.flags || [];
+          const guaranteedEgg = flags.includes('guaranteed_egg');
+          const interior = existing || generateDarkCave(closest.id, closest.seed, { guaranteedEgg });
+          if (!existing) useGameStore.getState().setPOIInterior(interior);
+          useGameStore.getState().enterPOI(closest.id);
+          this.markVisitPOIQuests(closest.id);
+          const mainData = { terrainData: this.terrainData, playerPosition: this.playerGridPosition, worldSnapshot: this.worldSnapshot };
+          this.scene.start('DarkCaveScene', { interior, mainData });
+        } else if (closest.type === POI_TYPES.VILLAGE) {
+          const existing = store.gameState?.poiInteriors.find(i => i.id === closest.id);
+          const interior = existing || generateVillage(closest.id, closest.seed);
+          if (!existing) useGameStore.getState().setPOIInterior(interior);
+          useGameStore.getState().enterPOI(closest.id);
+          this.markVisitPOIQuests(closest.id);
+          const mainData = { terrainData: this.terrainData, playerPosition: this.playerGridPosition, worldSnapshot: this.worldSnapshot };
+          this.scene.start('VillageScene', { interior, mainData });
         }
-        // Mark entering POI
-        useGameStore.getState().enterPOI(closest.id);
-        // Start dark cave scene
-        const mainData = { terrainData: this.terrainData, playerPosition: this.playerGridPosition, worldSnapshot: this.worldSnapshot };
-        this.scene.start('DarkCaveScene', { interior, mainData });
       }
     });
     
-    console.log('💡 Setting up lighting...');
     this.setupLighting();
-    console.log('✅ Lighting setup complete');
-    
-    console.log('🖥️ Setting up UI...');
     this.setupUI();
-    console.log('✅ UI setup complete');
-
-    // Pointer hover tile info (desktop-friendly)
-    this.hoverText = this.add.text(10, this.scale.height - 12, '', { fontSize: '12px', color: '#ffffff' })
-      .setScrollFactor(0)
-      .setDepth(100001)
-      .setPadding(6, 4)
-      .setStroke('#000000', 3)
-      .setShadow(1, 1, '#000000', 2, false, true)
-      .setOrigin(0, 1);
-    this.scale.on('resize', (gameSize: any) => {
-      const h = gameSize?.height ?? this.scale.height;
-      this.hoverText!.setPosition(10, h - 12);
-    });
-    this.input.on('pointermove', (pointer: Phaser.Input.Pointer) => {
-      const worldX = pointer.worldX;
-      const worldY = pointer.worldY;
-      const terrain = this.getTerrainAt(worldX, worldY);
-      if (!terrain) {
-        this.hoverText!.setText('');
-        return;
-      }
-      const grid = worldToGrid({ x: worldX, y: worldY }, TILE_SIZE);
-      const biome = terrain.biome as string;
-      const tileKey = `tile-${biome}`;
-      this.hoverText!.setText(`(${grid.x},${grid.y}) ${biome}  ${tileKey}`);
-    });
 
     // POI prompt text (bottom center)
     this.poiPromptText = this.add.text(this.scale.width / 2, this.scale.height - 60, '', {
@@ -239,21 +209,30 @@ export class MainScene extends Phaser.Scene {
       this.poiPromptText!.setPosition(w / 2, h - 60);
     });
 
-    // Performance debug overlay - visible on screen
-    this.debugText = this.add.text(10, this.scale.height - 40, 'FPS: --', { 
-      fontSize: '11px', 
-      color: '#00ff00',
-      backgroundColor: '#000000cc',
-      padding: { x: 6, y: 3 }
-    })
-      .setScrollFactor(0)
-      .setDepth(100000)
-      .setOrigin(0, 1);
-    
-    this.scale.on('resize', (gameSize: any) => {
-      const h = gameSize?.height ?? this.scale.height;
-      this.debugText!.setPosition(10, h - 40);
-    });
+    // debug overlay removed
+  }
+
+  private markVisitPOIQuests(poiId: string) {
+    try {
+      const store = useGameStore.getState();
+      const gs = store.gameState;
+      if (!gs) return;
+      const updated = (gs.quests || []).map(q => {
+        if (q.status === 'active') {
+          const objs = q.objectives.map(o => {
+            if (o.type === 'visit_poi' && (o.target as any)?.poiId === poiId && !o.completed) {
+              return { ...o, progress: 1, completed: true };
+            }
+            return o;
+          });
+          const allDone = objs.every(o => o.completed);
+          return { ...q, objectives: objs, status: allDone ? 'completed' as any : q.status, completedAt: allDone ? new Date().toISOString() : q.completedAt };
+        }
+        return q;
+      });
+      // Shallow write back
+      (store as any).set((state: any) => ({ gameState: { ...state.gameState, quests: updated } }));
+    } catch {}
   }
 
   update(time: number, delta: number) {
@@ -263,20 +242,9 @@ export class MainScene extends Phaser.Scene {
     this.player.update(delta);
     this.cameraController.update(delta);
     
-    // Track frame times for performance metrics
-    this.frameCount++;
-    this.deltaHistory.push(delta);
-    if (this.deltaHistory.length > 60) this.deltaHistory.shift();
-    
-    // Update debug overlay every 250ms
-    if (time - this.lastFpsUpdate > 250) {
-      this.updateDebugOverlay();
-      this.lastFpsUpdate = time;
-    }
-    
     // Only update chunks every 200ms or when camera moves significantly
     this.chunkUpdateTimer += delta;
-    if (this.chunkUpdateTimer > 200) {
+    if (this.chunkUpdateTimer > 200 && this.terrainRenderer && !this.terrainRenderer.isDestroyed) {
       const currentBounds = this.cameras.main.getBounds();
       const boundsChanged = !this.lastCameraBounds || 
         Math.abs(currentBounds.x - this.lastCameraBounds.x) > TILE_SIZE * 2 ||
@@ -285,8 +253,10 @@ export class MainScene extends Phaser.Scene {
         Math.abs(currentBounds.height - this.lastCameraBounds.height) > 20;
       
       if (boundsChanged) {
-        this.terrainRenderer.updateVisibleChunks(this.cameras.main);
-        this.lastCameraBounds = Phaser.Geom.Rectangle.Clone(currentBounds);
+        try {
+          this.terrainRenderer.updateVisibleChunks(this.cameras.main);
+          this.lastCameraBounds = Phaser.Geom.Rectangle.Clone(currentBounds);
+        } catch (e) { /* ignore */ }
       }
       this.chunkUpdateTimer = 0;
     }
@@ -303,7 +273,7 @@ export class MainScene extends Phaser.Scene {
         if (d < bestD) { bestD = d; closest = p; }
       }
       if (closest && bestD <= 3) {
-        if (closest.type === POI_TYPES.DARK_CAVE) {
+        if (closest.type === POI_TYPES.DARK_CAVE || closest.type === POI_TYPES.VILLAGE) {
           this.poiPromptText.setText(`Press Space to enter ${closest.name}`);
           this.poiPromptText.setVisible(true);
         } else {
@@ -333,39 +303,5 @@ export class MainScene extends Phaser.Scene {
     return this.terrainRenderer.isWalkable(x, y);
   }
   
-  private updateDebugOverlay() {
-    const fps = Math.round(this.game.loop.actualFps);
-    const objects = this.children.list.length;
-    const chunks = (this.terrainRenderer as any).chunks?.size || 0;
-    const avgDelta = this.deltaHistory.length > 0 
-      ? (this.deltaHistory.reduce((a, b) => a + b, 0) / this.deltaHistory.length).toFixed(1)
-      : '0';
-    const maxDelta = this.deltaHistory.length > 0 
-      ? Math.max(...this.deltaHistory).toFixed(1)
-      : '0';
-    
-    // Update visual overlay
-    if (this.debugText) {
-      // Color code FPS
-      let fpsColor = '#00ff00'; // green
-      if (fps < 30) fpsColor = '#ffff00'; // yellow
-      if (fps < 20) fpsColor = '#ff0000'; // red
-      
-      this.debugText.setColor(fpsColor);
-      this.debugText.setText(
-        `FPS: ${fps} | Objs: ${objects} | Chunks: ${chunks} | Δ: ${avgDelta}ms (max: ${maxDelta}ms)`
-      );
-    }
-    
-    // Optional console logging behind ?debug flag to avoid perf impact
-    try {
-      if (typeof window !== 'undefined') {
-        const p = new URLSearchParams(window.location.search);
-        if (p.has('debug')) {
-          // eslint-disable-next-line no-console
-          console.log(`🔥 PERF: FPS: ${fps} | Objects: ${objects} | Chunks: ${chunks} | Δ: ${avgDelta}ms (max: ${maxDelta}ms)`);
-        }
-      }
-    } catch {}
-  }
+  // debug overlay removed
 }

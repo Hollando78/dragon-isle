@@ -46,10 +46,9 @@ export async function saveGameToSlot(gameState: GameState): Promise<void> {
     const validatedState = GameStateSchema.parse(gameState);
     
     await db.put('saves', validatedState);
-    
-    console.log(`Game saved to slot ${gameState.saveHeader.slotId}`);
+    // debug logging removed
   } catch (error) {
-    console.error('Failed to save game:', error);
+    // suppress error logs
     throw new Error('Failed to save game');
   }
 }
@@ -72,7 +71,7 @@ export async function loadGameFromSlot(slotId: number): Promise<GameState | null
     
     return validatedState;
   } catch (error) {
-    console.error('Failed to load game:', error);
+    // suppress error logs
     throw new Error('Failed to load game');
   }
 }
@@ -81,9 +80,8 @@ export async function deleteGameFromSlot(slotId: number): Promise<void> {
   try {
     const db = await getDB();
     await db.delete('saves', slotId);
-    console.log(`Game deleted from slot ${slotId}`);
   } catch (error) {
-    console.error('Failed to delete game:', error);
+    // suppress error logs
     throw new Error('Failed to delete game');
   }
 }
@@ -94,7 +92,7 @@ export async function getAllSaves(): Promise<GameState[]> {
     const saves = await db.getAllFromIndex('saves', 'by-updated');
     return saves.map(save => GameStateSchema.parse(save));
   } catch (error) {
-    console.error('Failed to get all saves:', error);
+    // suppress error logs
     return [];
   }
 }
@@ -113,13 +111,12 @@ export async function getSaveInfo(slotId: number): Promise<{ exists: boolean; he
       header: save.saveHeader
     };
   } catch (error) {
-    console.error('Failed to get save info:', error);
+    // suppress error logs
     return { exists: false };
   }
 }
 
 async function migrateGameState(gameState: GameState): Promise<GameState> {
-  console.log(`Migrating save from version ${gameState.saveHeader.version} to ${SAVE_VERSION}`);
   let migrated = { ...gameState } as GameState as any;
   // v1 -> v2: add historyIndex defaults if missing and bump version
   if (!('historyIndex' in migrated.worldSnapshot)) {
@@ -160,7 +157,7 @@ export async function importSave(data: string, slotId?: number): Promise<void> {
     
     await saveGameToSlot(validatedSave);
   } catch (error) {
-    console.error('Failed to import save:', error);
+    // suppress error logs
     throw new Error('Invalid save data');
   }
 }
@@ -188,9 +185,8 @@ export async function clearAllData(): Promise<void> {
     ]);
     
     await tx.done;
-    console.log('All data cleared');
   } catch (error) {
-    console.error('Failed to clear data:', error);
+    // suppress error logs
     throw new Error('Failed to clear data');
   }
 }

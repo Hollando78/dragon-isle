@@ -51,16 +51,7 @@ export class InputController {
   }
 
   private setupKeyboardControls() {
-    const dbg = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('debug');
-    if (dbg) {
-      // eslint-disable-next-line no-console
-      console.log('🎮 Setting up keyboard controls...');
-    }
     if (!this.scene.input.keyboard) {
-      if (dbg) {
-        // eslint-disable-next-line no-console
-        console.error('❌ No keyboard input available');
-      }
       return;
     }
     
@@ -73,12 +64,7 @@ export class InputController {
       shift: this.scene.input.keyboard.addKey('SHIFT'),
       space: this.scene.input.keyboard.addKey('SPACE')
     };
-    if (dbg) {
-      // eslint-disable-next-line no-console
-      console.log('✅ Keyboard controls setup complete');
-      // eslint-disable-next-line no-console
-      console.log('🎮 Controls: Arrow keys/WASD to move, Shift to run, Space to interact');
-    }
+    // debug logging removed
   }
 
   private setupTouchControls() {
@@ -222,21 +208,7 @@ export class InputController {
       const spacePressed = this.wasd.space.isDown;
       
       if (leftPressed || rightPressed || upPressed || downPressed || shiftPressed || spacePressed) {
-        if (!inputDetected) {
-          const dbg = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('debug');
-          if (dbg) {
-            // eslint-disable-next-line no-console
-            console.log('🎮 Input detected:', {
-              left: leftPressed,
-              right: rightPressed, 
-              up: upPressed,
-              down: downPressed,
-              shift: shiftPressed,
-              space: spacePressed
-            });
-          }
-          inputDetected = true;
-        }
+        inputDetected = true;
       }
       
       if (leftPressed) moveX -= 1;
@@ -246,11 +218,7 @@ export class InputController {
       
       isRunning = shiftPressed;
     } else {
-      const dbg = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('debug');
-      if (dbg) {
-        // eslint-disable-next-line no-console
-        console.warn('⚠️ No keyboard controls available');
-      }
+      // no keyboard controls available
     }
     
     // Touch/mouse input (desktop click-to-move only)
@@ -262,13 +230,7 @@ export class InputController {
         if (distance > 5) {
           moveX = dx / distance;
           moveY = dy / distance;
-          if (!inputDetected) {
-            const dbg = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('debug');
-            if (dbg) {
-              // eslint-disable-next-line no-console
-              console.log('🖱️ Touch/mouse movement:', { moveX, moveY, distance });
-            }
-          }
+          // debug logging removed
         } else {
           this.touchControls.isMoving = false;
           this.touchControls.target = null;
@@ -280,22 +242,11 @@ export class InputController {
     if (this.isMobile && (this.touchControls.joystick.x !== 0 || this.touchControls.joystick.y !== 0)) {
       moveX = this.touchControls.joystick.x;
       moveY = this.touchControls.joystick.y;
-      if (!inputDetected) {
-        const dbg = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('debug');
-        if (dbg) {
-          // eslint-disable-next-line no-console
-          console.log('🕹️ Joystick input:', { moveX, moveY });
-        }
-      }
+      // debug logging removed
     }
     
     // Apply movement
     if (moveX !== 0 || moveY !== 0) {
-      const dbg = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('debug');
-      if (dbg) {
-        // eslint-disable-next-line no-console
-        console.log('🏃 Attempting to move player:', { moveX, moveY, isRunning, playerPos: { x: this.player.sprite.x, y: this.player.sprite.y } });
-      }
       this.player.move(moveX, moveY, isRunning);
     } else {
       this.player.stop();
@@ -303,13 +254,7 @@ export class InputController {
     
     // Handle interaction
     if (!this.isMobile && this.wasd?.space.isDown) {
-      if (!inputDetected) {
-        const dbg2 = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('debug');
-        if (dbg2) {
-          // eslint-disable-next-line no-console
-          console.log('💫 Player interact triggered');
-        }
-      }
+      // debug logging removed
       this.player.interact();
     }
   }

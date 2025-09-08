@@ -28,10 +28,13 @@ export class TerrainRenderer {
   private edgeSteps: number;
   private edgeWidthFactor: number; // fraction of TILE_SIZE
   private variationAmount: number; // total brightness range (e.g., 0.16 => ±8%)
+  private lastPOIUpdate = 0; // Track last POI update time
+  private forcePOIUpdate = false; // Force next POI update
   private variantKeys: Map<string, string[]>;
   private chunkPool: Phaser.GameObjects.GameObject[] = []; // Pool for reusing chunks
-  private maxChunks = 16; // Maximum chunks to keep loaded
+  private maxChunks = 48; // Maximum chunks to keep loaded (safer on large screens)
   private chunkAccessTime: Map<string, number> = new Map(); // Track chunk access for LRU
+  public isDestroyed = false; // Track destruction state (public for external checks)
 
   constructor(scene: Phaser.Scene, terrainData: TerrainData) {
     this.scene = scene;
@@ -42,7 +45,7 @@ export class TerrainRenderer {
     this.texturedBiomeKeys = new Set();
     this.variantKeys = new Map();
     this.useRenderTextures = false; // hard-disable RTs to avoid FBO issues
-    // Prefer stability and performance: default to CanvasTexture composition
+    // Default to CanvasTexture composition for performance (1 image per chunk)
     // You can disable with ?canvasTiles=0 if needed
     let canvasTiles = true;
     if (typeof window !== 'undefined') {
@@ -53,11 +56,12 @@ export class TerrainRenderer {
     }
     this.useCanvasTiles = canvasTiles;
     // Defaults, can be tuned via URL params (except RTs)
-    this.edgeEnabled = true;
+    // Disable soft edges by default for performance; enable with ?edges=1
+    this.edgeEnabled = false;
     this.edgeAlphaBase = 0.15;
-    this.edgeSteps = 3; // Reduced from 6 for performance
-    this.edgeWidthFactor = 0.12;
-    this.variationAmount = 0.08; // Reduced variation for performance
+    this.edgeSteps = 2; // Further reduced for performance
+    this.edgeWidthFactor = 0.10;
+    this.variationAmount = 0.05; // Reduced variation for better performance
     this.readTuningParams();
   }
 
@@ -110,128 +114,193 @@ export class TerrainRenderer {
     const centerChunkY = Math.floor(centerGridY / CHUNK_SIZE);
     
     
-    // Load a 3x3 grid of chunks around the chosen center to reduce initial object count
-    let chunksLoaded = 0;
-    for (let dy = -1; dy <= 1; dy++) {
-      for (let dx = -1; dx <= 1; dx++) {
-        const chunkX = centerChunkX + dx;
-        const chunkY = centerChunkY + dy;
-        const key = `${chunkX},${chunkY}`;
-        if (!this.chunks.has(key)) {
-          this.loadChunk(chunkX, chunkY);
-          chunksLoaded++;
-        }
-      }
+    // Load only the center chunk initially to reduce startup time
+    const key = `${centerChunkX},${centerChunkY}`;
+    if (!this.chunks.has(key)) {
+      try {
+        this.loadChunk(centerChunkX, centerChunkY);
+      } catch (e) { /* ignore */ }
     }
     
-    this.updateVisibleChunks(camera);
+    // Load surrounding chunks after a short delay
+    this.scene.time.delayedCall(100, () => {
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          if (dx === 0 && dy === 0) continue; // Skip center, already loaded
+          const chunkX = centerChunkX + dx;
+          const chunkY = centerChunkY + dy;
+          const key = `${chunkX},${chunkY}`;
+          if (!this.chunks.has(key)) {
+            try {
+              this.loadChunk(chunkX, chunkY);
+            } catch (e) { /* ignore */ }
+          }
+        }
+      }
+    });
 
     // Draw rivers overlay once
     this.drawRivers();
     // Draw POI markers
     this.drawPOIs();
+    // Force POI update on next frame to ensure they appear
+    this.forcePOIUpdate = true;
   }
 
   // Force-load chunks around a grid position (grid coordinates, not pixels)
   forceLoadAround(gridX: number, gridY: number, radiusChunks = 2) {
+    if (this.isDestroyed) return;
+    
     const centerChunkX = Math.floor(gridX / CHUNK_SIZE);
     const centerChunkY = Math.floor(gridY / CHUNK_SIZE);
-    let loaded = 0;
+    
+    // Load chunks progressively to avoid frame drops
+    let delay = 0;
     for (let dy = -radiusChunks; dy <= radiusChunks; dy++) {
       for (let dx = -radiusChunks; dx <= radiusChunks; dx++) {
         const cx = centerChunkX + dx;
         const cy = centerChunkY + dy;
         const key = `${cx},${cy}`;
         if (!this.chunks.has(key) && cx >= 0 && cy >= 0) {
-          this.loadChunk(cx, cy);
-          loaded++;
+          this.scene.time.delayedCall(delay, () => {
+            try {
+              if (!this.isDestroyed) {
+                this.loadChunk(cx, cy);
+              }
+            } catch (e) { /* ignore */ }
+          });
+          delay += 50; // Stagger chunk loading
         }
       }
     }
   }
 
   updateVisibleChunks(camera: Phaser.Cameras.Scene2D.Camera) {
-    const bounds = camera.getBounds();
+    if (this.isDestroyed) {
+      return;
+    }
     
-    // Add minimal buffer and clamp to reasonable limits
-    const buffer = TILE_SIZE * CHUNK_SIZE * 0.5; // Half-chunk buffer
-    const bufferedBounds = {
-      x: bounds.x - buffer,
-      y: bounds.y - buffer,
-      width: bounds.width + buffer * 2,
-      height: bounds.height + buffer * 2
-    };
-    
-    const startChunkX = Math.max(0, Math.floor(bufferedBounds.x / (CHUNK_SIZE * TILE_SIZE)));
-    const startChunkY = Math.max(0, Math.floor(bufferedBounds.y / (CHUNK_SIZE * TILE_SIZE)));
-    const endChunkX = Math.ceil((bufferedBounds.x + bufferedBounds.width) / (CHUNK_SIZE * TILE_SIZE));
-    const endChunkY = Math.ceil((bufferedBounds.y + bufferedBounds.height) / (CHUNK_SIZE * TILE_SIZE));
-
-    const newVisibleChunks = new Set<string>();
-
-    for (let cy = startChunkY; cy <= endChunkY; cy++) {
-      for (let cx = startChunkX; cx <= endChunkX; cx++) {
-        // Skip negative chunk coordinates
-        if (cx < 0 || cy < 0) continue;
-        
-        // Skip chunks beyond world bounds
-        const maxChunkX = Math.ceil(this.terrainData.biomeMap[0].length / CHUNK_SIZE);
-        const maxChunkY = Math.ceil(this.terrainData.biomeMap.length / CHUNK_SIZE);
-        if (cx >= maxChunkX || cy >= maxChunkY) continue;
-        
-        const key = `${cx},${cy}`;
-        newVisibleChunks.add(key);
-
-        if (!this.chunks.has(key)) {
-          this.loadChunk(cx, cy);
-        }
-      }
-    }
-
-    // Mark visible chunks as recently accessed
-    const now = performance.now();
-    for (const key of newVisibleChunks) {
-      this.chunkAccessTime.set(key, now);
-    }
-
-    // Unload chunks that are no longer visible
-    for (const key of this.visibleChunks) {
-      if (!newVisibleChunks.has(key)) {
-        this.unloadChunk(key);
-      }
-    }
-
-    // Aggressively limit total chunks using LRU
-    if (this.chunks.size > this.maxChunks) {
-      const chunkEntries = Array.from(this.chunkAccessTime.entries())
-        .sort((a, b) => a[1] - b[1]); // Sort by access time, oldest first
-      
-      // Remove oldest chunks until we're under the limit
-      const toRemove = this.chunks.size - this.maxChunks;
-      for (let i = 0; i < toRemove && i < chunkEntries.length; i++) {
-        const [key] = chunkEntries[i];
-        if (!newVisibleChunks.has(key)) { // Don't remove currently visible chunks
-          this.unloadChunk(key);
-          this.chunkAccessTime.delete(key);
-        }
-      }
-    }
-
-    this.visibleChunks = newVisibleChunks;
-
-    // Refresh POIs to only show those near the current view
     try {
-      this.drawPOIs();
-    } catch (e) {
-      // Non-fatal; keep terrain visible even if POIs fail
+      const bounds = camera.getBounds();
+      
+      // Add small buffer around the view to reduce popping but avoid overloading
+      const buffer = TILE_SIZE * CHUNK_SIZE * 0.25; // Quarter-chunk buffer
+      const bufferedBounds = {
+        x: bounds.x - buffer,
+        y: bounds.y - buffer,
+        width: bounds.width + buffer * 2,
+        height: bounds.height + buffer * 2
+      };
+      
+      const startChunkX = Math.max(0, Math.floor(bufferedBounds.x / (CHUNK_SIZE * TILE_SIZE)));
+      const startChunkY = Math.max(0, Math.floor(bufferedBounds.y / (CHUNK_SIZE * TILE_SIZE)));
+      const endChunkX = Math.ceil((bufferedBounds.x + bufferedBounds.width) / (CHUNK_SIZE * TILE_SIZE));
+      const endChunkY = Math.ceil((bufferedBounds.y + bufferedBounds.height) / (CHUNK_SIZE * TILE_SIZE));
+
+      const newVisibleChunks = new Set<string>();
+      const chunksToLoad: {x: number, y: number, key: string}[] = [];
+
+      for (let cy = startChunkY; cy <= endChunkY; cy++) {
+        for (let cx = startChunkX; cx <= endChunkX; cx++) {
+          // Skip negative chunk coordinates
+          if (cx < 0 || cy < 0) continue;
+          
+          // Skip chunks beyond world bounds
+          const maxChunkX = Math.ceil(this.terrainData.biomeMap[0].length / CHUNK_SIZE);
+          const maxChunkY = Math.ceil(this.terrainData.biomeMap.length / CHUNK_SIZE);
+          if (cx >= maxChunkX || cy >= maxChunkY) continue;
+          
+          const key = `${cx},${cy}`;
+          newVisibleChunks.add(key);
+
+          if (!this.chunks.has(key)) {
+            chunksToLoad.push({x: cx, y: cy, key});
+          }
+        }
+      }
+
+      // Load chunks progressively to avoid frame drops
+      this.loadChunksProgressive(chunksToLoad);
+    } catch (e) { /* ignore */ }
+
+    // Mark visible chunks as recently accessed (outside try block to ensure it runs)
+    const now = performance.now();
+    try {
+      // Safety: if nothing computed (extreme edge cases), keep current visible set and bail
+      if (newVisibleChunks.size === 0) {
+        return;
+      }
+
+      for (const key of newVisibleChunks) {
+        this.chunkAccessTime.set(key, now);
+      }
+
+      // Unload chunks that are no longer visible
+      for (const key of this.visibleChunks) {
+        if (!newVisibleChunks.has(key)) {
+          this.unloadChunk(key);
+        }
+      }
+
+      // Limit total chunks using LRU (avoid unloading currently visible)
+      if (this.chunks.size > this.maxChunks) {
+        const chunkEntries = Array.from(this.chunkAccessTime.entries())
+          .sort((a, b) => a[1] - b[1]); // Sort by access time, oldest first
+        
+        // Remove oldest chunks until we're under the limit
+        const toRemove = this.chunks.size - this.maxChunks;
+        for (let i = 0; i < toRemove && i < chunkEntries.length; i++) {
+          const [key] = chunkEntries[i];
+          if (!newVisibleChunks.has(key)) { // Don't remove currently visible chunks
+            this.unloadChunk(key);
+            this.chunkAccessTime.delete(key);
+          }
+        }
+      }
+
+      this.visibleChunks = newVisibleChunks;
+
+      // Throttle POI updates to every 500ms for performance, but allow forced updates
+      if (this.forcePOIUpdate || now - this.lastPOIUpdate > 500) {
+        this.lastPOIUpdate = now;
+        this.forcePOIUpdate = false;
+        try {
+          this.drawPOIs();
+        } catch (e) {
+          // Non-fatal; keep terrain visible even if POIs fail
+        }
+      }
+    } catch (e) { /* ignore */ }
+  }
+
+  // Progressive chunk loading to avoid frame drops
+  private loadChunksProgressive(chunksToLoad: {x: number, y: number, key: string}[]) {
+    if (chunksToLoad.length === 0) return;
+    
+    let delay = 0;
+    for (const chunk of chunksToLoad) {
+      this.scene.time.delayedCall(delay, () => {
+        try {
+          if (!this.isDestroyed && !this.chunks.has(chunk.key)) {
+            this.loadChunk(chunk.x, chunk.y);
+          }
+        } catch (e) { /* ignore */ }
+      });
+      delay += 16; // ~1 chunk per frame at 60fps
     }
   }
 
   private loadChunk(chunkX: number, chunkY: number) {
     const key = `${chunkX},${chunkY}`;
+    
+    // Early exit if already loading or loaded
+    if (this.chunks.has(key) || this.isDestroyed) {
+      return;
+    }
 
-    const baseX = chunkX * CHUNK_SIZE * TILE_SIZE;
-    const baseY = chunkY * CHUNK_SIZE * TILE_SIZE;
+    try {
+      const baseX = chunkX * CHUNK_SIZE * TILE_SIZE;
+      const baseY = chunkY * CHUNK_SIZE * TILE_SIZE;
 
     // Choose composition path: CanvasTexture (preferred) or Graphics (fallback)
     const hasBiomeTextures = this.texturedBiomeKeys.size > 0;
@@ -254,7 +323,7 @@ export class TerrainRenderer {
         ctx = canvasTex.getContext();
         useCanvas = true;
       } catch (e) {
-        console.warn('CanvasTexture path failed; falling back to Graphics for chunk', key, e);
+        // Silent fallback to Graphics
         useCanvas = false;
         canvasTex = null;
         ctx = null;
@@ -339,8 +408,8 @@ export class TerrainRenderer {
           }
         }
 
-        // Neighbor-aware soft borders (left and up to avoid double drawing)
-        if (this.edgeEnabled) {
+        // Skip neighbor-aware soft borders entirely for now - major performance issue
+        if (false && this.edgeEnabled) { // Disabled for stability
           // Left edge
           if (worldX > 0) {
             const nbBiome = this.terrainData.biomeMap[worldY][worldX - 1];
@@ -369,15 +438,29 @@ export class TerrainRenderer {
       }
     }
 
-    // Finalize per path
-    if (useCanvas && canvasTex && ctx) {
-      canvasTex.refresh();
-      const img = this.scene.add.image(baseX, baseY, canvasTex.key).setOrigin(0, 0);
-      img.setDepth(-2000);
-      this.chunks.set(key, { x: chunkX, y: chunkY, gfx: img });
-    } else {
-      const handle = (gfx)!;
-      this.chunks.set(key, { x: chunkX, y: chunkY, gfx: handle });
+      // Finalize per path
+      if (useCanvas && canvasTex && ctx) {
+        canvasTex.refresh();
+        const img = this.scene.add.image(baseX, baseY, canvasTex.key).setOrigin(0, 0);
+        img.setDepth(-2000);
+        this.chunks.set(key, { x: chunkX, y: chunkY, gfx: img });
+      } else {
+        const handle = (gfx)!;
+        this.chunks.set(key, { x: chunkX, y: chunkY, gfx: handle });
+      }
+    } catch (e) {
+      // Clean up any partial resources
+      try {
+        if (canvasTex) {
+          this.scene.textures.remove(canvasTex.key);
+        }
+        if (gfx) {
+          gfx.destroy();
+        }
+      } catch (cleanupError) {
+        // Ignore cleanup errors
+      }
+      // Don't mark renderer as destroyed - continue with other chunks
     }
   }
 
@@ -526,8 +609,14 @@ export class TerrainRenderer {
   private unloadChunk(key: string) {
     const chunk = this.chunks.get(key);
     if (chunk) {
-      // Completely destroy the chunk to free memory
-      chunk.gfx.destroy();
+      try {
+        // Completely destroy the chunk to free memory
+        if (chunk.gfx && typeof chunk.gfx.destroy === 'function') {
+          chunk.gfx.destroy();
+        }
+      } catch (e) {
+        // Silent error
+      }
       this.chunks.delete(key);
       this.chunkAccessTime.delete(key);
     }
@@ -563,7 +652,13 @@ export class TerrainRenderer {
   private drawPOIs() {
     if (!this.poiGfx) {
       this.poiGfx = this.scene.add.graphics();
-      this.poiGfx.setDepth(-1400);
+      // Ensure POIs render above terrain/rivers but below player/UI
+      // Terrain: ~-2000, Rivers: ~-1500, Player: 0, UI: >> 0
+      this.poiGfx.setDepth(-100);
+      this.poiGfx.setAlpha(1);
+      this.poiGfx.setBlendMode(Phaser.BlendModes.NORMAL);
+      this.poiGfx.setScrollFactor(1);
+      this.poiGfx.setVisible(true);
     } else {
       this.poiGfx.clear();
     }
@@ -571,16 +666,17 @@ export class TerrainRenderer {
       for (const t of this.poiTexts) t.destroy();
     }
     this.poiTexts = [];
-    const snapshot: any = (this.terrainData as any);
-    const pois = snapshot && snapshot.biomeMap ? (snapshot as any).worldPois || [] : [];
-    // If TerrainData doesn't include POIs, try to access via scene data (MainScene passes worldSnapshot to scene.renderers)
+    
+    // Get POI data from the scene worldSnapshot
     const sceneAny = this.scene as any;
-    const worldSnapshot = sceneAny.worldSnapshot || sceneAny.sys?.settings?.data?.worldSnapshot || undefined;
-    const poiList = worldSnapshot?.pois || pois;
+    const worldSnapshot = sceneAny.worldSnapshot;
+    
+    
+    const poiList = worldSnapshot?.pois || [];
     if (!poiList || poiList.length === 0) return;
     // Only draw POIs within (or near) the current camera view to reduce draw calls
     const cam = this.scene.cameras.main;
-    const buffer = TILE_SIZE * CHUNK_SIZE; // 1 chunk margin
+    const buffer = TILE_SIZE * CHUNK_SIZE * 4;
     const view = new Phaser.Geom.Rectangle(
       cam.worldView.x - buffer,
       cam.worldView.y - buffer,
@@ -593,10 +689,14 @@ export class TerrainRenderer {
       if (p.has('poiLabels')) return p.get('poiLabels') !== '0';
       return true;
     })();
+    
     for (const p of poiList) {
       const x = p.position.x * TILE_SIZE + TILE_SIZE / 2;
       const y = p.position.y * TILE_SIZE + TILE_SIZE / 2;
-      if (!Phaser.Geom.Rectangle.Contains(view, x, y)) continue;
+      const isVisible = Phaser.Geom.Rectangle.Contains(view, x, y);
+      if (!isVisible) {
+        continue;
+      }
       // Contrast ring
       this.poiGfx!.fillStyle(0x000000, 0.6);
       this.poiGfx!.fillCircle(x, y, 7);
@@ -608,13 +708,15 @@ export class TerrainRenderer {
           fontSize: '12px',
           color: '#ffffff'
         })
-          .setDepth(-1390)
+          // Keep labels paired with icons just above the POI icon depth
+          .setDepth(-90)
           .setStroke('#000000', 4)
           .setShadow(1, 1, '#000000', 2, false, true)
           .setOrigin(0, 1);
         this.poiTexts!.push(txt);
       }
     }
+    // debug summary removed
   }
 
   private poiColor(type: string): number {
@@ -763,5 +865,27 @@ export class TerrainRenderer {
     const walkable = terrain.height > SEA_LEVEL && !nonWalkables.has(terrain.biome as any);
     
     return walkable;
+  }
+  
+  // Cleanup method to properly dispose of all resources
+  cleanup() {
+    if (this.isDestroyed) return;
+    
+    this.isDestroyed = true;
+    
+    // Only clear data structures, don't destroy graphics
+    // Let Phaser handle cleanup to avoid crashes
+    this.chunks.clear();
+    this.visibleChunks.clear();
+    this.chunkAccessTime.clear();
+    
+    // Clear references without destroying - let Phaser handle cleanup
+    this.riverGfx = undefined;
+    this.poiGfx = undefined;
+    this.poiTexts = undefined;
+    this.tmpEdgeGfx = undefined;
+    this.chunkPool.length = 0;
+    
+    // Cleanup completed
   }
 }
