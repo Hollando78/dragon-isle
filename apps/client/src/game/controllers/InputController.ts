@@ -51,9 +51,16 @@ export class InputController {
   }
 
   private setupKeyboardControls() {
-    console.log('🎮 Setting up keyboard controls...');
+    const dbg = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('debug');
+    if (dbg) {
+      // eslint-disable-next-line no-console
+      console.log('🎮 Setting up keyboard controls...');
+    }
     if (!this.scene.input.keyboard) {
-      console.error('❌ No keyboard input available');
+      if (dbg) {
+        // eslint-disable-next-line no-console
+        console.error('❌ No keyboard input available');
+      }
       return;
     }
     
@@ -66,8 +73,12 @@ export class InputController {
       shift: this.scene.input.keyboard.addKey('SHIFT'),
       space: this.scene.input.keyboard.addKey('SPACE')
     };
-    console.log('✅ Keyboard controls setup complete');
-    console.log('🎮 Controls: Arrow keys/WASD to move, Shift to run, Space to interact');
+    if (dbg) {
+      // eslint-disable-next-line no-console
+      console.log('✅ Keyboard controls setup complete');
+      // eslint-disable-next-line no-console
+      console.log('🎮 Controls: Arrow keys/WASD to move, Shift to run, Space to interact');
+    }
   }
 
   private setupTouchControls() {
@@ -212,14 +223,18 @@ export class InputController {
       
       if (leftPressed || rightPressed || upPressed || downPressed || shiftPressed || spacePressed) {
         if (!inputDetected) {
-          console.log('🎮 Input detected:', {
-            left: leftPressed,
-            right: rightPressed, 
-            up: upPressed,
-            down: downPressed,
-            shift: shiftPressed,
-            space: spacePressed
-          });
+          const dbg = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('debug');
+          if (dbg) {
+            // eslint-disable-next-line no-console
+            console.log('🎮 Input detected:', {
+              left: leftPressed,
+              right: rightPressed, 
+              up: upPressed,
+              down: downPressed,
+              shift: shiftPressed,
+              space: spacePressed
+            });
+          }
           inputDetected = true;
         }
       }
@@ -231,7 +246,11 @@ export class InputController {
       
       isRunning = shiftPressed;
     } else {
-      console.warn('⚠️ No keyboard controls available');
+      const dbg = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('debug');
+      if (dbg) {
+        // eslint-disable-next-line no-console
+        console.warn('⚠️ No keyboard controls available');
+      }
     }
     
     // Touch/mouse input (desktop click-to-move only)
@@ -243,7 +262,13 @@ export class InputController {
         if (distance > 5) {
           moveX = dx / distance;
           moveY = dy / distance;
-          if (!inputDetected) console.log('🖱️ Touch/mouse movement:', { moveX, moveY, distance });
+          if (!inputDetected) {
+            const dbg = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('debug');
+            if (dbg) {
+              // eslint-disable-next-line no-console
+              console.log('🖱️ Touch/mouse movement:', { moveX, moveY, distance });
+            }
+          }
         } else {
           this.touchControls.isMoving = false;
           this.touchControls.target = null;
@@ -255,12 +280,22 @@ export class InputController {
     if (this.isMobile && (this.touchControls.joystick.x !== 0 || this.touchControls.joystick.y !== 0)) {
       moveX = this.touchControls.joystick.x;
       moveY = this.touchControls.joystick.y;
-      if (!inputDetected) console.log('🕹️ Joystick input:', { moveX, moveY });
+      if (!inputDetected) {
+        const dbg = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('debug');
+        if (dbg) {
+          // eslint-disable-next-line no-console
+          console.log('🕹️ Joystick input:', { moveX, moveY });
+        }
+      }
     }
     
     // Apply movement
     if (moveX !== 0 || moveY !== 0) {
-      console.log('🏃 Attempting to move player:', { moveX, moveY, isRunning, playerPos: { x: this.player.sprite.x, y: this.player.sprite.y } });
+      const dbg = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('debug');
+      if (dbg) {
+        // eslint-disable-next-line no-console
+        console.log('🏃 Attempting to move player:', { moveX, moveY, isRunning, playerPos: { x: this.player.sprite.x, y: this.player.sprite.y } });
+      }
       this.player.move(moveX, moveY, isRunning);
     } else {
       this.player.stop();
@@ -269,7 +304,11 @@ export class InputController {
     // Handle interaction
     if (!this.isMobile && this.wasd?.space.isDown) {
       if (!inputDetected) {
-        console.log('💫 Player interact triggered');
+        const dbg2 = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('debug');
+        if (dbg2) {
+          // eslint-disable-next-line no-console
+          console.log('💫 Player interact triggered');
+        }
       }
       this.player.interact();
     }

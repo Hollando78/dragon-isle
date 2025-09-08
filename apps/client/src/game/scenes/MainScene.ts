@@ -24,6 +24,12 @@ export class MainScene extends Phaser.Scene {
   private npcManager!: NPCManager;
   private hoverText?: Phaser.GameObjects.Text;
   private poiPromptText?: Phaser.GameObjects.Text;
+  private lastCameraBounds?: Phaser.Geom.Rectangle;
+  private chunkUpdateTimer = 0;
+  private debugText?: Phaser.GameObjects.Text;
+  private frameCount = 0;
+  private lastFpsUpdate = 0;
+  private deltaHistory: number[] = [];
 
   constructor() {
     super({ key: 'MainScene' });
@@ -42,7 +48,6 @@ export class MainScene extends Phaser.Scene {
   }
 
   preload() {
-    console.log('🎨 MainScene.preload() started - loading assets...');
     this.load.image('terrain-tiles', '/assets/terrain-tileset.png');
     this.load.image('player', '/assets/player.png');
     this.load.image('dragon', '/assets/dragon.png');
@@ -52,7 +57,6 @@ export class MainScene extends Phaser.Scene {
       'grassland', 'forest', 'hills', 'mountain', 'swamp',
       'desert', 'savanna', 'shrubland', 'rainforest', 'taiga', 'tundra', 'alpine'
     ];
-    console.log('🖼️ Loading biome tiles (with curated variants):', biomes);
     for (const biome of biomes) {
       // Base first
       this.load.image(`tile-${biome}`, `/assets/tiles/${biome}.png`);
@@ -235,26 +239,21 @@ export class MainScene extends Phaser.Scene {
       this.poiPromptText!.setPosition(w / 2, h - 60);
     });
 
-    // Optional debug overlay: enable with ?debug in URL
-    if (typeof window !== 'undefined') {
-      const debug = new URLSearchParams(window.location.search).has('debug');
-      if (debug) {
-        const fpsText = this.add.text(10, 10, 'FPS: --', { fontSize: '12px', color: '#ffffff' })
-          .setScrollFactor(0)
-          .setDepth(100000);
-        this.time.addEvent({
-          delay: 500,
-          loop: true,
-          callback: () => {
-            const fps = Math.round(this.game.loop.actualFps);
-            const objects = this.children.list.length;
-            fpsText.setText(`FPS: ${fps}  Objects: ${objects}`);
-          }
-        });
-      }
-    }
+    // Performance debug overlay - visible on screen
+    this.debugText = this.add.text(10, this.scale.height - 40, 'FPS: --', { 
+      fontSize: '11px', 
+      color: '#00ff00',
+      backgroundColor: '#000000cc',
+      padding: { x: 6, y: 3 }
+    })
+      .setScrollFactor(0)
+      .setDepth(100000)
+      .setOrigin(0, 1);
     
-    console.log('🎉 MainScene.create() completed successfully!');
+    this.scale.on('resize', (gameSize: any) => {
+      const h = gameSize?.height ?? this.scale.height;
+      this.debugText!.setPosition(10, h - 40);
+    });
   }
 
   update(time: number, delta: number) {
@@ -263,7 +262,34 @@ export class MainScene extends Phaser.Scene {
     this.inputController.update(delta);
     this.player.update(delta);
     this.cameraController.update(delta);
-    this.terrainRenderer.updateVisibleChunks(this.cameras.main);
+    
+    // Track frame times for performance metrics
+    this.frameCount++;
+    this.deltaHistory.push(delta);
+    if (this.deltaHistory.length > 60) this.deltaHistory.shift();
+    
+    // Update debug overlay every 250ms
+    if (time - this.lastFpsUpdate > 250) {
+      this.updateDebugOverlay();
+      this.lastFpsUpdate = time;
+    }
+    
+    // Only update chunks every 200ms or when camera moves significantly
+    this.chunkUpdateTimer += delta;
+    if (this.chunkUpdateTimer > 200) {
+      const currentBounds = this.cameras.main.getBounds();
+      const boundsChanged = !this.lastCameraBounds || 
+        Math.abs(currentBounds.x - this.lastCameraBounds.x) > TILE_SIZE * 2 ||
+        Math.abs(currentBounds.y - this.lastCameraBounds.y) > TILE_SIZE * 2 ||
+        Math.abs(currentBounds.width - this.lastCameraBounds.width) > 20 ||
+        Math.abs(currentBounds.height - this.lastCameraBounds.height) > 20;
+      
+      if (boundsChanged) {
+        this.terrainRenderer.updateVisibleChunks(this.cameras.main);
+        this.lastCameraBounds = Phaser.Geom.Rectangle.Clone(currentBounds);
+      }
+      this.chunkUpdateTimer = 0;
+    }
 
     // Update POI prompt visibility
     const pois = this.worldSnapshot?.pois || [];
@@ -305,5 +331,41 @@ export class MainScene extends Phaser.Scene {
 
   isWalkable(x: number, y: number): boolean {
     return this.terrainRenderer.isWalkable(x, y);
+  }
+  
+  private updateDebugOverlay() {
+    const fps = Math.round(this.game.loop.actualFps);
+    const objects = this.children.list.length;
+    const chunks = (this.terrainRenderer as any).chunks?.size || 0;
+    const avgDelta = this.deltaHistory.length > 0 
+      ? (this.deltaHistory.reduce((a, b) => a + b, 0) / this.deltaHistory.length).toFixed(1)
+      : '0';
+    const maxDelta = this.deltaHistory.length > 0 
+      ? Math.max(...this.deltaHistory).toFixed(1)
+      : '0';
+    
+    // Update visual overlay
+    if (this.debugText) {
+      // Color code FPS
+      let fpsColor = '#00ff00'; // green
+      if (fps < 30) fpsColor = '#ffff00'; // yellow
+      if (fps < 20) fpsColor = '#ff0000'; // red
+      
+      this.debugText.setColor(fpsColor);
+      this.debugText.setText(
+        `FPS: ${fps} | Objs: ${objects} | Chunks: ${chunks} | Δ: ${avgDelta}ms (max: ${maxDelta}ms)`
+      );
+    }
+    
+    // Optional console logging behind ?debug flag to avoid perf impact
+    try {
+      if (typeof window !== 'undefined') {
+        const p = new URLSearchParams(window.location.search);
+        if (p.has('debug')) {
+          // eslint-disable-next-line no-console
+          console.log(`🔥 PERF: FPS: ${fps} | Objects: ${objects} | Chunks: ${chunks} | Δ: ${avgDelta}ms (max: ${maxDelta}ms)`);
+        }
+      }
+    } catch {}
   }
 }

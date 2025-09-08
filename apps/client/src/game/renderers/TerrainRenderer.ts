@@ -29,6 +29,9 @@ export class TerrainRenderer {
   private edgeWidthFactor: number; // fraction of TILE_SIZE
   private variationAmount: number; // total brightness range (e.g., 0.16 => ±8%)
   private variantKeys: Map<string, string[]>;
+  private chunkPool: Phaser.GameObjects.GameObject[] = []; // Pool for reusing chunks
+  private maxChunks = 16; // Maximum chunks to keep loaded
+  private chunkAccessTime: Map<string, number> = new Map(); // Track chunk access for LRU
 
   constructor(scene: Phaser.Scene, terrainData: TerrainData) {
     this.scene = scene;
@@ -39,31 +42,27 @@ export class TerrainRenderer {
     this.texturedBiomeKeys = new Set();
     this.variantKeys = new Map();
     this.useRenderTextures = false; // hard-disable RTs to avoid FBO issues
-    // Prefer stability: default to Graphics path unless explicitly enabled via URL (?canvasTiles=1)
-    let canvasTiles = false;
+    // Prefer stability and performance: default to CanvasTexture composition
+    // You can disable with ?canvasTiles=0 if needed
+    let canvasTiles = true;
     if (typeof window !== 'undefined') {
       const p = new URLSearchParams(window.location.search);
-      canvasTiles = p.get('canvasTiles') === '1';
+      if (p.has('canvasTiles')) {
+        canvasTiles = p.get('canvasTiles') === '1';
+      }
     }
     this.useCanvasTiles = canvasTiles;
     // Defaults, can be tuned via URL params (except RTs)
     this.edgeEnabled = true;
-    this.edgeAlphaBase = 0.22;
-    this.edgeSteps = 6;
-    this.edgeWidthFactor = 0.16;
-    this.variationAmount = 0.16;
+    this.edgeAlphaBase = 0.15;
+    this.edgeSteps = 3; // Reduced from 6 for performance
+    this.edgeWidthFactor = 0.12;
+    this.variationAmount = 0.08; // Reduced variation for performance
     this.readTuningParams();
-    console.log(`🧪 RenderTexture usage: disabled (forced)`);
-    console.log(`🎨 Edges: ${this.edgeEnabled ? 'on' : 'off'} width=${(this.edgeWidthFactor*TILE_SIZE).toFixed(1)} alpha=${this.edgeAlphaBase} steps=${this.edgeSteps} var=±${(this.variationAmount*50).toFixed(1)}%`);
-    console.log(`🧩 Tile composition mode: ${this.useCanvasTiles ? 'CanvasTexture' : 'Graphics (safe)'} (toggle with ?canvasTiles=1)`);
   }
 
   render(centerGrid?: { x: number; y: number }) {
-    console.log('🗺️ TerrainRenderer.render() called');
-    console.log('🗺️ Terrain data size:', this.terrainData.biomeMap.length, 'x', this.terrainData.biomeMap[0]?.length);
     const camera = this.scene.cameras.main;
-    console.log('📹 Camera bounds:', camera.getBounds());
-    console.log('📹 Camera position:', { x: camera.x, y: camera.y, zoom: camera.zoom });
     
     // Detect which biome textures are available (e.g., tile-ocean, tile-beach, and variants)
     this.texturedBiomeKeys.clear();
@@ -110,8 +109,6 @@ export class TerrainRenderer {
     const centerChunkX = Math.floor(centerGridX / CHUNK_SIZE);
     const centerChunkY = Math.floor(centerGridY / CHUNK_SIZE);
     
-    console.log('🎯 World center grid:', { x: centerGridX, y: centerGridY });
-    console.log('🎯 Center chunk:', { x: centerChunkX, y: centerChunkY });
     
     // Load a 3x3 grid of chunks around the chosen center to reduce initial object count
     let chunksLoaded = 0;
@@ -120,7 +117,6 @@ export class TerrainRenderer {
         const chunkX = centerChunkX + dx;
         const chunkY = centerChunkY + dy;
         const key = `${chunkX},${chunkY}`;
-        console.log(`🔄 Force loading chunk ${key} at center area`);
         if (!this.chunks.has(key)) {
           this.loadChunk(chunkX, chunkY);
           chunksLoaded++;
@@ -128,16 +124,7 @@ export class TerrainRenderer {
       }
     }
     
-    console.log(`✅ Loaded ${chunksLoaded} new chunks around center`);
     this.updateVisibleChunks(camera);
-    console.log('🗺️ Total chunks loaded:', this.chunks.size);
-
-    // Check chunk count for quick sanity
-    const chunksArray = Array.from(this.chunks.values());
-    console.log('🔍 Chunk visibility check:', {
-      totalChunks: chunksArray.length,
-      firstChunk: chunksArray[0] ? { position: { x: chunksArray[0].x, y: chunksArray[0].y } } : 'none'
-    });
 
     // Draw rivers overlay once
     this.drawRivers();
@@ -161,15 +148,24 @@ export class TerrainRenderer {
         }
       }
     }
-    console.log(`🧱 Force loaded ${loaded} chunks around player at`, { gridX, gridY, centerChunkX, centerChunkY });
   }
 
   updateVisibleChunks(camera: Phaser.Cameras.Scene2D.Camera) {
     const bounds = camera.getBounds();
-    const startChunkX = Math.floor(bounds.x / (CHUNK_SIZE * TILE_SIZE));
-    const startChunkY = Math.floor(bounds.y / (CHUNK_SIZE * TILE_SIZE));
-    const endChunkX = Math.ceil((bounds.x + bounds.width) / (CHUNK_SIZE * TILE_SIZE));
-    const endChunkY = Math.ceil((bounds.y + bounds.height) / (CHUNK_SIZE * TILE_SIZE));
+    
+    // Add minimal buffer and clamp to reasonable limits
+    const buffer = TILE_SIZE * CHUNK_SIZE * 0.5; // Half-chunk buffer
+    const bufferedBounds = {
+      x: bounds.x - buffer,
+      y: bounds.y - buffer,
+      width: bounds.width + buffer * 2,
+      height: bounds.height + buffer * 2
+    };
+    
+    const startChunkX = Math.max(0, Math.floor(bufferedBounds.x / (CHUNK_SIZE * TILE_SIZE)));
+    const startChunkY = Math.max(0, Math.floor(bufferedBounds.y / (CHUNK_SIZE * TILE_SIZE)));
+    const endChunkX = Math.ceil((bufferedBounds.x + bufferedBounds.width) / (CHUNK_SIZE * TILE_SIZE));
+    const endChunkY = Math.ceil((bufferedBounds.y + bufferedBounds.height) / (CHUNK_SIZE * TILE_SIZE));
 
     const newVisibleChunks = new Set<string>();
 
@@ -192,23 +188,52 @@ export class TerrainRenderer {
       }
     }
 
+    // Mark visible chunks as recently accessed
+    const now = performance.now();
+    for (const key of newVisibleChunks) {
+      this.chunkAccessTime.set(key, now);
+    }
+
+    // Unload chunks that are no longer visible
     for (const key of this.visibleChunks) {
       if (!newVisibleChunks.has(key)) {
         this.unloadChunk(key);
       }
     }
 
+    // Aggressively limit total chunks using LRU
+    if (this.chunks.size > this.maxChunks) {
+      const chunkEntries = Array.from(this.chunkAccessTime.entries())
+        .sort((a, b) => a[1] - b[1]); // Sort by access time, oldest first
+      
+      // Remove oldest chunks until we're under the limit
+      const toRemove = this.chunks.size - this.maxChunks;
+      for (let i = 0; i < toRemove && i < chunkEntries.length; i++) {
+        const [key] = chunkEntries[i];
+        if (!newVisibleChunks.has(key)) { // Don't remove currently visible chunks
+          this.unloadChunk(key);
+          this.chunkAccessTime.delete(key);
+        }
+      }
+    }
+
     this.visibleChunks = newVisibleChunks;
+
+    // Refresh POIs to only show those near the current view
+    try {
+      this.drawPOIs();
+    } catch (e) {
+      // Non-fatal; keep terrain visible even if POIs fail
+    }
   }
 
   private loadChunk(chunkX: number, chunkY: number) {
     const key = `${chunkX},${chunkY}`;
-    console.log(`📦 Loading chunk ${key}`);
 
     const baseX = chunkX * CHUNK_SIZE * TILE_SIZE;
     const baseY = chunkY * CHUNK_SIZE * TILE_SIZE;
 
-    // Choose composition path: RenderTexture (fast), CanvasTexture (safe), or Graphics (fallback)
+    // Choose composition path: CanvasTexture (preferred) or Graphics (fallback)
     const hasBiomeTextures = this.texturedBiomeKeys.size > 0;
     let useRT = false;
     let useCanvas = false;
@@ -218,7 +243,8 @@ export class TerrainRenderer {
     let ctx: CanvasRenderingContext2D | null = null;
 
     // RenderTextures disabled to avoid framebuffer issues
-    if (hasBiomeTextures && this.useCanvasTiles) {
+    // Use CanvasTexture when enabled, regardless of whether tile textures exist
+    if (this.useCanvasTiles) {
       try {
         const w = CHUNK_SIZE * TILE_SIZE;
         const h = CHUNK_SIZE * TILE_SIZE;
@@ -279,11 +305,19 @@ export class TerrainRenderer {
             this.tmpEdgeGfx.fillStyle(shade.color, shade.alpha);
             this.tmpEdgeGfx.fillRect(baseX + px, baseY + py, TILE_SIZE, TILE_SIZE);
           }
-        } else if (useCanvas && ctx && chosenKey && this.scene.textures.exists(chosenKey)) {
-          const src = this.scene.textures.get(chosenKey).getSourceImage() as HTMLImageElement | HTMLCanvasElement;
-          const sw = (src as any).width || TILE_SIZE;
-          const sh = (src as any).height || TILE_SIZE;
-          ctx.drawImage(src, 0, 0, sw, sh, px, py, TILE_SIZE, TILE_SIZE);
+        } else if (useCanvas && ctx) {
+          if (chosenKey && this.scene.textures.exists(chosenKey)) {
+            const src = this.scene.textures.get(chosenKey).getSourceImage() as HTMLImageElement | HTMLCanvasElement;
+            const sw = (src as any).width || TILE_SIZE;
+            const sh = (src as any).height || TILE_SIZE;
+            ctx.drawImage(src, 0, 0, sw, sh, px, py, TILE_SIZE, TILE_SIZE);
+          } else {
+            // No texture: draw a solid biome color directly onto the canvas
+            const baseColor = this.getBiomeColor(biome, height, moisture);
+            ctx.fillStyle = this.colorToRGBA(baseColor, 1);
+            ctx.fillRect(px, py, TILE_SIZE, TILE_SIZE);
+          }
+          // Subtle deterministic per-tile shading overlay for variety
           const shade = this.getTileShade(worldX, worldY, biome, height, moisture);
           if (shade.alpha > 0) {
             ctx.fillStyle = this.colorToRGBA(shade.color, shade.alpha);
@@ -341,11 +375,9 @@ export class TerrainRenderer {
       const img = this.scene.add.image(baseX, baseY, canvasTex.key).setOrigin(0, 0);
       img.setDepth(-2000);
       this.chunks.set(key, { x: chunkX, y: chunkY, gfx: img });
-      console.log(`✅ Chunk ${key} drawn as CanvasTexture-backed Image`);
     } else {
       const handle = (gfx)!;
       this.chunks.set(key, { x: chunkX, y: chunkY, gfx: handle });
-      console.log(`✅ Chunk ${key} drawn as Graphics object`);
     }
   }
 
@@ -412,21 +444,13 @@ export class TerrainRenderer {
     moisture: number
   ) {
     const edgeW = Math.max(2, Math.floor(TILE_SIZE * this.edgeWidthFactor));
-    const cThis = this.getBiomeColor(biome, height, moisture);
     const cNb = this.getBiomeColor(nbBiome, height, moisture);
-    // Draw a small gradient-like strip using multiple alpha steps of neighbor color
-    const steps = this.edgeSteps;
-    for (let i = 0; i < steps; i++) {
-      const t = (i + 1) / steps; // 0..1
-      const alpha = this.edgeAlphaBase * (1 - i / steps);
-      g.fillStyle(this.lerpColor(cNb, cThis, t), alpha);
-      if (dir === 'left') {
-        const w = Math.max(1, Math.floor((edgeW * (steps - i)) / steps));
-        g.fillRect(px, py, w, TILE_SIZE);
-      } else {
-        const h = Math.max(1, Math.floor((edgeW * (steps - i)) / steps));
-        g.fillRect(px, py, TILE_SIZE, h);
-      }
+    // Simplified edge drawing - single translucent overlay
+    g.fillStyle(cNb, this.edgeAlphaBase);
+    if (dir === 'left') {
+      g.fillRect(px, py, edgeW, TILE_SIZE);
+    } else {
+      g.fillRect(px, py, TILE_SIZE, edgeW);
     }
   }
 
@@ -441,20 +465,13 @@ export class TerrainRenderer {
     moisture: number
   ) {
     const edgeW = Math.max(2, Math.floor(TILE_SIZE * this.edgeWidthFactor));
-    const cThis = this.getBiomeColor(biome, height, moisture);
     const cNb = this.getBiomeColor(nbBiome, height, moisture);
-    const steps = this.edgeSteps;
-    for (let i = 0; i < steps; i++) {
-      const t = (i + 1) / steps;
-      const alpha = this.edgeAlphaBase * (1 - i / steps);
-      ctx.fillStyle = this.colorToRGBA(this.lerpColor(cNb, cThis, t), alpha);
-      if (dir === 'left') {
-        const w = Math.max(1, Math.floor((edgeW * (steps - i)) / steps));
-        ctx.fillRect(px, py, w, TILE_SIZE);
-      } else {
-        const h = Math.max(1, Math.floor((edgeW * (steps - i)) / steps));
-        ctx.fillRect(px, py, TILE_SIZE, h);
-      }
+    // Simplified edge drawing - single translucent overlay
+    ctx.fillStyle = this.colorToRGBA(cNb, this.edgeAlphaBase);
+    if (dir === 'left') {
+      ctx.fillRect(px, py, edgeW, TILE_SIZE);
+    } else {
+      ctx.fillRect(px, py, TILE_SIZE, edgeW);
     }
   }
 
@@ -509,12 +526,19 @@ export class TerrainRenderer {
   private unloadChunk(key: string) {
     const chunk = this.chunks.get(key);
     if (chunk) {
+      // Completely destroy the chunk to free memory
       chunk.gfx.destroy();
       this.chunks.delete(key);
+      this.chunkAccessTime.delete(key);
     }
   }
 
   private drawRivers() {
+    // Allow disabling rivers overlay for performance via ?rivers=0
+    if (typeof window !== 'undefined') {
+      const p = new URLSearchParams(window.location.search);
+      if (p.get('rivers') === '0') return;
+    }
     if (!this.terrainData || !(this.terrainData as any).rivers) return;
     if (this.riverGfx) this.riverGfx.destroy();
     this.riverGfx = this.scene.add.graphics();
@@ -554,16 +578,32 @@ export class TerrainRenderer {
     const worldSnapshot = sceneAny.worldSnapshot || sceneAny.sys?.settings?.data?.worldSnapshot || undefined;
     const poiList = worldSnapshot?.pois || pois;
     if (!poiList || poiList.length === 0) return;
+    // Only draw POIs within (or near) the current camera view to reduce draw calls
+    const cam = this.scene.cameras.main;
+    const buffer = TILE_SIZE * CHUNK_SIZE; // 1 chunk margin
+    const view = new Phaser.Geom.Rectangle(
+      cam.worldView.x - buffer,
+      cam.worldView.y - buffer,
+      cam.worldView.width + buffer * 2,
+      cam.worldView.height + buffer * 2
+    );
+    const showLabels = ((): boolean => {
+      if (typeof window === 'undefined') return true;
+      const p = new URLSearchParams(window.location.search);
+      if (p.has('poiLabels')) return p.get('poiLabels') !== '0';
+      return true;
+    })();
     for (const p of poiList) {
       const x = p.position.x * TILE_SIZE + TILE_SIZE / 2;
       const y = p.position.y * TILE_SIZE + TILE_SIZE / 2;
+      if (!Phaser.Geom.Rectangle.Contains(view, x, y)) continue;
       // Contrast ring
       this.poiGfx!.fillStyle(0x000000, 0.6);
       this.poiGfx!.fillCircle(x, y, 7);
       // Placeholder icon by type
       this.drawPOIIcon(this.poiGfx!, x, y, p.type);
       // Label
-      if (p.name) {
+      if (showLabels && p.name) {
         const txt = this.scene.add.text(x + 8, y - 10, p.name, {
           fontSize: '12px',
           color: '#ffffff'
@@ -712,19 +752,15 @@ export class TerrainRenderer {
 
   isWalkable(worldX: number, worldY: number): boolean {
     const gridPos = worldToGrid({ x: worldX, y: worldY }, TILE_SIZE);
-    console.log(`🚶 Walkability check: world(${worldX.toFixed(1)}, ${worldY.toFixed(1)}) -> grid(${gridPos.x}, ${gridPos.y})`);
     
     const terrain = this.getTerrainAt(worldX, worldY);
     if (!terrain) {
-      console.log(`❌ No terrain data at grid(${gridPos.x}, ${gridPos.y}) - world bounds: ${this.terrainData.biomeMap[0].length}x${this.terrainData.biomeMap.length}`);
       return false;
     }
     
     // Treat ocean and high mountains as non-walkable; alpine peaks too
     const nonWalkables = new Set<string>([BIOMES.OCEAN, BIOMES.MOUNTAIN, BIOMES.ALPINE]);
     const walkable = terrain.height > SEA_LEVEL && !nonWalkables.has(terrain.biome as any);
-    
-    console.log(`🚶 Terrain at grid(${gridPos.x}, ${gridPos.y}): height=${terrain.height}, biome=${terrain.biome}, walkable=${walkable}, seaLevel=${SEA_LEVEL}`);
     
     return walkable;
   }

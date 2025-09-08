@@ -12,7 +12,7 @@ export function GameHUD({ onSave, onExit }: GameHUDProps) {
   const { gameState } = useGameStore();
   const [showMenu, setShowMenu] = useState(false);
   const [showInventory, setShowInventory] = useState(false);
-  const [showFullscreenMap, setShowFullscreenMap] = useState(false);
+  const [minimapState, setMinimapState] = useState<'hidden' | 'mini' | 'full'>('mini');
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'success' | 'error'>('idle');
   const [saveMessage, setSaveMessage] = useState<string>('');
 
@@ -24,93 +24,15 @@ export function GameHUD({ onSave, onExit }: GameHUDProps) {
 
   return (
     <>
-      <div className="absolute top-4 left-4 space-y-2 safe-area-inset">
-        <div className="ui-panel p-3 min-w-[200px]">
-          <div className="space-y-2">
-            <div>
-              <div className="flex justify-between text-xs mb-1">
-                <span>HP</span>
-                <span>{playerState.hp}/{playerState.maxHp}</span>
-              </div>
-              <div className="stat-bar">
-                <div 
-                  className="stat-bar-fill bg-dragon-secondary"
-                  style={{ width: `${hpPercent}%` }}
-                />
-              </div>
-            </div>
-            
-            <div>
-              <div className="flex justify-between text-xs mb-1">
-                <span>Stamina</span>
-                <span>{playerState.stamina}/{playerState.maxStamina}</span>
-              </div>
-              <div className="stat-bar">
-                <div 
-                  className="stat-bar-fill bg-dragon-primary"
-                  style={{ width: `${staminaPercent}%` }}
-                />
-              </div>
-            </div>
+      {/* HP/Stamina HUD hidden for performance testing */}
 
-            <div className="text-xs">
-              <div>Level {playerState.level}</div>
-              <div className="text-gray-400">EXP: {playerState.experience}</div>
-            </div>
-          </div>
-        </div>
+      {/* Top-right UI buttons hidden for performance testing */}
 
-        {playerState.activeDragonId && (
-          <div className="ui-panel p-3">
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 bg-dragon-primary rounded-full" />
-              <div className="text-sm">
-                <div>Dragon Companion</div>
-                <div className="text-xs text-gray-400">Bond: 50%</div>
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-
-      <div className="absolute top-4 right-4 flex gap-2 safe-area-inset">
-        <button
-          onClick={() => setShowFullscreenMap(true)}
-          className="ui-panel p-3 hover:border-dragon-secondary transition-colors"
-          title="Fullscreen map"
-        >
-          🗺️
-        </button>
-        <button
-          onClick={() => setShowInventory(!showInventory)}
-          className="ui-panel p-3 hover:border-dragon-secondary transition-colors"
-        >
-          🎒
-        </button>
-        
-        <button
-          onClick={() => setShowMenu(!showMenu)}
-          className="ui-panel p-3 hover:border-dragon-secondary transition-colors"
-        >
-          ☰
-        </button>
-      </div>
-
-      <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 safe-area-inset">
-        <div className="ui-panel p-2 flex gap-2">
-          {[1, 2, 3, 4, 5].map(slot => (
-            <div key={slot} className="inventory-slot">
-              {slot === 1 && <span className="text-2xl">⚔️</span>}
-              {slot === 2 && <span className="text-2xl">🛡️</span>}
-              {slot === 3 && <span className="text-2xl">🧪</span>}
-            </div>
-          ))}
-        </div>
-      </div>
+      {/* Bottom toolbar hidden for performance testing */}
 
       {showMenu && (
         <div className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="ui-panel p-6 space-y-4 min-w-[300px]">
+          <div className="bg-gray-800 border border-gray-600 rounded-lg p-6 space-y-4 min-w-[300px]">
             <h2 className="text-xl font-bold text-center">Menu</h2>
             
             <div className="space-y-2">
@@ -162,7 +84,7 @@ export function GameHUD({ onSave, onExit }: GameHUDProps) {
 
       {showInventory && (
         <div className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="ui-panel p-6 max-w-2xl w-full max-h-[80vh] overflow-auto">
+          <div className="bg-gray-800 border border-gray-600 rounded-lg p-6 max-w-2xl w-full max-h-[80vh] overflow-auto">
             <div className="flex justify-between items-center mb-4">
               <h2 className="text-xl font-bold">Inventory</h2>
               <button 
@@ -194,15 +116,32 @@ export function GameHUD({ onSave, onExit }: GameHUDProps) {
         </div>
       )}
 
-      {/* Collapsible Minimap */}
-      <Minimap initialCollapsed={false} size={160} />
-
-      {/* Fullscreen Minimap Overlay */}
-      {showFullscreenMap && (
-        <Minimap fullscreen onClose={() => setShowFullscreenMap(false)} />
+      {/* Minimap (bottom-right mini, or fullscreen overlay) */}
+      {minimapState === 'mini' && (
+        <Minimap size={160} />
+      )}
+      {minimapState === 'full' && (
+        <Minimap fullscreen onClose={() => setMinimapState('mini')} />
       )}
 
+      {/* Minimap state toggle (cycles: hidden → mini → full → hidden) */}
+      <div
+        className="absolute right-4 z-50 pointer-events-auto"
+        style={{ bottom: minimapState === 'mini' ? 188 : 16 }}
+      >
+        <button
+          className="bg-gray-800 border border-gray-600 rounded-full w-10 h-10 flex items-center justify-center shadow hover:bg-gray-700"
+          title={`Minimap: ${minimapState} (click to cycle)`}
+          onClick={() => {
+            setMinimapState((prev) => (prev === 'hidden' ? 'mini' : prev === 'mini' ? 'full' : 'hidden'));
+          }}
+        >
+          🗺️
+        </button>
+      </div>
+
       {/* Dialogue Overlay */}
+      
       <DialogueOverlay />
     </>
   );

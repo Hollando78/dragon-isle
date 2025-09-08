@@ -63,7 +63,7 @@ echo "Starting new container..."
 docker run -d \
   --name ${CONTAINER_NAME} \
   --restart unless-stopped \
-  -p 127.0.0.1:${PORT}:80 \
+  -p 0.0.0.0:${PORT}:80 \
   ${IMAGE_NAME}:${TAG}
 
 echo "Deployment complete!"

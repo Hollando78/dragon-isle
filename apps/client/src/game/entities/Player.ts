@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { clamp, normalize, worldToIsometric, worldToGrid, gridToWorld, TILE_SIZE } from '@dragon-isle/shared';
+import { ensureWalkingManTexture } from '../assets/walkingMan';
 import { useGameStore } from '../../state/gameStore';
 
 export class Player {
@@ -39,11 +40,14 @@ export class Player {
 
     this.shadow = scene.add.ellipse(x, y + 8, 20, 10, 0x000000, 0.3);
 
-    // Create player as a small circle instead of rectangle
-    this.sprite = scene.add.circle(x, y, 16, 0x4a9eff) as any;
-    this.sprite.setStrokeStyle(2, 0x2966a3, 1);
+    // Ensure procedural walking man textures/animation exist
+    ensureWalkingManTexture(scene);
+    // Create player sprite using walking man frame 0
+    this.sprite = scene.add.sprite(x, y, 'walkman-0');
+    this.sprite.setOrigin(0.5, 0.8);
 
-    this.nameText = scene.add.text(x, y - 30, 'Player', {
+    // Place name label below the character so it doesn't overlap the face
+    this.nameText = scene.add.text(x, y + 18, 'Player', {
       fontSize: '12px',
       color: '#ffffff',
       stroke: '#000000',
@@ -77,18 +81,28 @@ export class Player {
   }
 
   move(x: number, y: number, isRunning = false) {
-    console.log('👤 Player.move() called:', { x, y, isRunning, currentPos: { x: this.sprite.x, y: this.sprite.y } });
+    const dbg = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('debug');
+    if (dbg) {
+      // eslint-disable-next-line no-console
+      console.log('👤 Player.move() called:', { x, y, isRunning, currentPos: { x: this.sprite.x, y: this.sprite.y } });
+    }
     const normalized = normalize({ x, y });
-    console.log('👤 Movement normalization:', { 
-      input: { x, y }, 
-      inputLength: Math.sqrt(x*x + y*y), 
-      normalized, 
-      normalizedLength: Math.sqrt(normalized.x*normalized.x + normalized.y*normalized.y) 
-    });
+    if (dbg) {
+      // eslint-disable-next-line no-console
+      console.log('👤 Movement normalization:', { 
+        input: { x, y }, 
+        inputLength: Math.sqrt(x*x + y*y), 
+        normalized, 
+        normalizedLength: Math.sqrt(normalized.x*normalized.x + normalized.y*normalized.y) 
+      });
+    }
     this.velocity = normalized;
     this.currentSpeed = isRunning ? this.runSpeed : this.baseSpeed;
     this.isMoving = true;
-    console.log('👤 Player velocity set:', { velocity: this.velocity, speed: this.currentSpeed, isMoving: this.isMoving });
+    if (dbg) {
+      // eslint-disable-next-line no-console
+      console.log('👤 Player velocity set:', { velocity: this.velocity, speed: this.currentSpeed, isMoving: this.isMoving });
+    }
   }
 
   stop() {
@@ -102,27 +116,39 @@ export class Player {
       const newX = this.sprite.x + this.velocity.x * moveDistance;
       const newY = this.sprite.y + this.velocity.y * moveDistance;
       
-      console.log('👤 Player.update() moving:', { 
-        delta, 
-        moveDistance, 
-        velocity: this.velocity, 
-        currentPos: { x: this.sprite.x, y: this.sprite.y },
-        newPos: { x: newX, y: newY }
-      });
+      const dbg = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('debug');
+      if (dbg) {
+        // eslint-disable-next-line no-console
+        console.log('👤 Player.update() moving:', { 
+          delta, 
+          moveDistance, 
+          velocity: this.velocity, 
+          currentPos: { x: this.sprite.x, y: this.sprite.y },
+          newPos: { x: newX, y: newY }
+        });
+      }
       
       const mainScene = this.scene as any;
       // Check walkability at player's center position (circle center)
       const canWalk = mainScene.isWalkable ? mainScene.isWalkable(newX, newY) : true;
-      console.log('👤 Walkability check for movement:', { 
-        from: { x: this.sprite.x, y: this.sprite.y }, 
-        to: { x: newX, y: newY },
-        canWalk,
-        moveVector: { x: this.velocity.x, y: this.velocity.y }
-      });
+      if (dbg) {
+        // eslint-disable-next-line no-console
+        console.log('👤 Walkability check for movement:', { 
+          from: { x: this.sprite.x, y: this.sprite.y }, 
+          to: { x: newX, y: newY },
+          canWalk,
+          moveVector: { x: this.velocity.x, y: this.velocity.y }
+        });
+      }
       
       if (canWalk) {
         this.sprite.x = newX;
         this.sprite.y = newY;
+
+        // Ensure walking animation plays while moving
+        if (!this.sprite.anims.isPlaying) {
+          this.sprite.play('walkman-walk');
+        }
         
         const depth = Math.floor(newY * 10 + newX * 0.1);
         this.sprite.setDepth(depth);
@@ -133,7 +159,7 @@ export class Player {
         this.shadow.x = newX;
         this.shadow.y = newY + 8;
         this.nameText.x = newX;
-        this.nameText.y = newY - 25;
+        this.nameText.y = newY + 18;
         
         // Update tile highlight position based on center position
         const gridPos = worldToGrid({ x: newX, y: newY }, TILE_SIZE);
@@ -146,9 +172,15 @@ export class Player {
           this.playFootstep();
           this.footstepTimer = 0;
         }
-        console.log('👤 Player position updated to:', { x: this.sprite.x, y: this.sprite.y });
+        if (dbg) {
+          // eslint-disable-next-line no-console
+          console.log('👤 Player position updated to:', { x: this.sprite.x, y: this.sprite.y });
+        }
       } else {
-        console.warn('👤 Movement blocked by terrain check:', { newX, newY });
+        if (dbg) {
+          // eslint-disable-next-line no-console
+          console.warn('👤 Movement blocked by terrain check:', { newX, newY });
+        }
       }
     }
 
@@ -216,7 +248,7 @@ export class Player {
     
     this.scene.time.delayedCall(100, () => {
       this.sprite.clearTint();
-      this.sprite.setTint(0x4a9eff);
+      // keep default colors; no static tint on normal state
     });
   }
 
@@ -253,7 +285,7 @@ export class Player {
     this.shadow.x = x;
     this.shadow.y = y + 8;
     this.nameText.x = x;
-    this.nameText.y = y - 25;
+    this.nameText.y = y + 18;
     
     // Update tile highlight position using center
     const gridPos = worldToGrid({ x, y }, TILE_SIZE);
@@ -266,5 +298,11 @@ export class Player {
     this.shadow.setDepth(depth - 1);
     this.nameText.setDepth(depth + 1);
     this.tileHighlight.setDepth(depth - 2);
+
+    // When not moving, ensure idle frame
+    if (!this.isMoving) {
+      this.sprite.anims.stop();
+      this.sprite.setTexture('walkman-0');
+    }
   }
 }

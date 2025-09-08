@@ -10,8 +10,8 @@ export class CameraController {
   private currentZoom = 1;
   private minZoom = 0.5;
   private maxZoom = 2;
-  private zoomSpeed = 0.1;
-  private followSpeed = 0.1;
+  private zoomSpeed = 0.15; // Increased for faster zoom
+  private followSpeed = 0.2; // Increased to reduce constant lerping
   private isDragging = false;
   private dragStart: { x: number; y: number } | null = null;
   private cameraStart: { x: number; y: number } | null = null;
@@ -26,12 +26,8 @@ export class CameraController {
   }
 
   private setupCamera() {
-    console.log('🎥 Setting up camera...');
-    console.log('🎥 Player sprite position:', { x: this.player.sprite.x, y: this.player.sprite.y });
-    
     // Center camera on player immediately
     this.camera.centerOn(this.player.sprite.x, this.player.sprite.y);
-    console.log('🎥 Camera centered on player');
     
     // Then start following
     this.camera.startFollow(this.player.sprite, true, this.followSpeed, this.followSpeed);
@@ -40,7 +36,6 @@ export class CameraController {
     // Set larger bounds to accommodate isometric world
     const worldSize = WORLD_SIZE * TILE_SIZE; // Grid size * tile size  
     this.camera.setBounds(-worldSize, -worldSize, worldSize * 2, worldSize * 2);
-    console.log('🎥 Camera bounds set:', { width: worldSize * 2, height: worldSize * 2 });
   }
 
   private setupInputHandlers() {
@@ -110,8 +105,11 @@ export class CameraController {
   }
 
   update(delta: number) {
-    this.currentZoom = lerp(this.currentZoom, this.targetZoom, this.zoomSpeed);
-    this.camera.setZoom(this.currentZoom);
+    // Only update zoom if there's a significant difference
+    if (Math.abs(this.currentZoom - this.targetZoom) > 0.01) {
+      this.currentZoom = lerp(this.currentZoom, this.targetZoom, this.zoomSpeed);
+      this.camera.setZoom(this.currentZoom);
+    }
   }
 
   setZoom(zoom: number) {

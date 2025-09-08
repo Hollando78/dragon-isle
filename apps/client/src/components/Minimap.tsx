@@ -161,7 +161,7 @@ export function Minimap({ initialCollapsed = false, size = 160, fullscreen = fal
         <div className="relative">
           <canvas ref={canvasRef} className="rounded-md border border-gray-700 shadow-2xl" style={{ width: Math.min(viewport.w || window.innerWidth, 1024), height: Math.min(viewport.h || window.innerHeight, 1024) }} />
           <button
-            className="absolute -top-3 -right-3 ui-panel p-2"
+            className="absolute -top-3 -right-3 bg-gray-800 border border-gray-600 rounded p-2 hover:bg-gray-700"
             onClick={onClose}
             title="Close"
           >
@@ -176,14 +176,14 @@ export function Minimap({ initialCollapsed = false, size = 160, fullscreen = fal
   return (
     <div className="absolute bottom-4 right-4 safe-area-inset" style={{ zIndex: 50 }}>
       {!collapsed ? (
-        <div className="ui-panel p-2 flex flex-col items-end gap-2">
+        <div className="bg-gray-800 border border-gray-600 rounded-lg p-2 flex flex-col items-end gap-2">
           <canvas ref={canvasRef} className="rounded-md border border-gray-700" style={{ width: size, height: size }} />
           <button className="btn-secondary" onClick={() => setCollapsed(true)} title="Collapse minimap">
             ▾ Minimap
           </button>
         </div>
       ) : (
-        <button className="ui-panel p-2" onClick={() => setCollapsed(false)} title="Expand minimap">
+        <button className="bg-gray-800 border border-gray-600 rounded p-2 hover:bg-gray-700" onClick={() => setCollapsed(false)} title="Expand minimap">
           🗺️
         </button>
       )}
