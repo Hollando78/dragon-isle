@@ -1,0 +1,117 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html, body {
+    @apply h-full w-full overflow-hidden;
+    @apply bg-dragon-dark text-dragon-light;
+    @apply font-game;
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
+  }
+
+  #root {
+    @apply h-full w-full;
+  }
+
+  * {
+    @apply box-border;
+  }
+
+  ::-webkit-scrollbar {
+    @apply w-2 h-2;
+  }
+
+  ::-webkit-scrollbar-track {
+    @apply bg-dragon-dark;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply bg-dragon-primary rounded-full;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-dragon-secondary;
+  }
+}
+
+@layer components {
+  .game-canvas {
+    @apply w-full h-full;
+    image-rendering: crisp-edges;
+    image-rendering: pixelated;
+  }
+
+  .ui-panel {
+    @apply bg-gray-900 bg-opacity-95 backdrop-blur-sm;
+    @apply border border-dragon-primary rounded-lg;
+    @apply shadow-xl;
+  }
+
+  .btn-primary {
+    @apply px-4 py-2 bg-dragon-primary text-white;
+    @apply rounded-lg font-semibold;
+    @apply transition-all duration-200;
+    @apply hover:bg-blue-600 hover:scale-105;
+    @apply active:scale-95;
+    @apply disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  .btn-secondary {
+    @apply px-4 py-2 bg-gray-700 text-white;
+    @apply rounded-lg font-semibold;
+    @apply transition-all duration-200;
+    @apply hover:bg-gray-600 hover:scale-105;
+    @apply active:scale-95;
+    @apply disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  .stat-bar {
+    @apply relative h-6 bg-gray-800 rounded-full overflow-hidden;
+  }
+
+  .stat-bar-fill {
+    @apply absolute inset-y-0 left-0 transition-all duration-300;
+  }
+
+  .inventory-slot {
+    @apply w-16 h-16 bg-gray-800 border-2 border-gray-700;
+    @apply rounded-lg transition-all duration-200;
+    @apply hover:border-dragon-primary hover:scale-105;
+    @apply cursor-pointer;
+  }
+
+  .inventory-slot.selected {
+    @apply border-dragon-secondary scale-110;
+  }
+}
+
+@layer utilities {
+  .animate-float {
+    animation: float 3s ease-in-out infinite;
+  }
+
+  @keyframes float {
+    0%, 100% {
+      transform: translateY(0);
+    }
+    50% {
+      transform: translateY(-10px);
+    }
+  }
+
+  .pixel-perfect {
+    image-rendering: crisp-edges;
+    image-rendering: pixelated;
+  }
+
+  .safe-area-inset {
+    padding-top: env(safe-area-inset-top);
+    padding-right: env(safe-area-inset-right);
+    padding-bottom: env(safe-area-inset-bottom);
+    padding-left: env(safe-area-inset-left);
+  }
+}

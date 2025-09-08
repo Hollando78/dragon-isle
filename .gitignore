@@ -1,0 +1,43 @@
+# Build directories
+/build/
+/dist/
+/out/
+
+# Dependencies
+node_modules/
+vendor/
+.venv/
+env/
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logs
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Game saves and user data
+/saves/
+/user_data/
+
+# Temporary files
+*.tmp
+.cache/
+temp/
+
+# Platform specific
+Thumbs.db
+desktop.ini
